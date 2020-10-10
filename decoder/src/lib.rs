@@ -102,6 +102,33 @@ pub enum Instruction {
     Sknp(Operand),
 }
 
+impl fmt::Display for Instruction {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Instruction::Sys(o) => write!(f, "SYS {}", o),
+            Instruction::Cls => write!(f, "CLS"),
+            Instruction::Ret => write!(f, "RET"),
+            Instruction::Jp(o) => write!(f, "JP {}", o),
+            Instruction::Call(o) => write!(f, "CALL {}", o),
+            Instruction::Se((o1, o2)) => write!(f, "SE {}, {}", o1, o2),
+            Instruction::Sne((o1, o2)) => write!(f, "SNE {}, {}", o1, o2),
+            Instruction::Ld((o1, o2)) => write!(f, "LD {}, {}", o1, o2),
+            Instruction::Add((o1, o2)) => write!(f, "ADD {}, {}", o1, o2),
+            Instruction::Or((o1, o2)) => write!(f, "OR {}, {}", o1, o2),
+            Instruction::And((o1, o2)) => write!(f, "AND {}, {}", o1, o2),
+            Instruction::Xor((o1, o2)) => write!(f, "XOR {}, {}", o1, o2),
+            Instruction::Sub((o1, o2)) => write!(f, "SUB {}, {}", o1, o2),
+            Instruction::Shr((o1, o2)) => write!(f, "Shr {}, {}", o1, o2),
+            Instruction::Subn((o1, o2)) => write!(f, "SUBN {}, {}", o1, o2),
+            Instruction::Shl((o1, o2)) => write!(f, "SHL {}, {}", o1, o2),
+            Instruction::Rnd((o1, o2)) => write!(f, "RND {}, {}", o1, o2),
+            Instruction::Drw((o1, o2, o3)) => write!(f, "DRW {}, {}, {}", o1, o2, o3),
+            Instruction::Skp(o) => write!(f, "SKP {}", o),
+            Instruction::Sknp(o) => write!(f, "SKNP {}", o),
+        }
+    }
+}
+
 /// Decodes an instruction.
 ///
 /// On success, returns `Some(Instruction)` that describes the deocded instruction and its operands.
@@ -326,6 +353,178 @@ fn make_nibble(value: u8) -> Operand {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn format_instruction() {
+        assert_eq!(
+            format!("{}", Instruction::Sys(Operand::Address(0xFFF))),
+            "SYS [0xfff]"
+        );
+        assert_eq!(
+            format!("{}", Instruction::Sys(Operand::Address(0x123))),
+            "SYS [0x123]"
+        );
+        assert_eq!(
+            format!("{}", Instruction::Jp(Operand::Address(0xFFF))),
+            "JP [0xfff]"
+        );
+        assert_eq!(
+            format!("{}", Instruction::Call(Operand::Address(0xFFF))),
+            "CALL [0xfff]"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                Instruction::Se((Operand::Gpr(1), Operand::Byte(0x12)))
+            ),
+            "SE V1, 0x12"
+        );
+        assert_eq!(
+            format!("{}", Instruction::Se((Operand::Flags, Operand::Byte(0x12)))),
+            "SE Vf, 0x12"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                Instruction::Sne((Operand::Gpr(1), Operand::Byte(0x12)))
+            ),
+            "SNE V1, 0x12"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                Instruction::Sne((Operand::Flags, Operand::Byte(0x12)))
+            ),
+            "SNE Vf, 0x12"
+        );
+        assert_eq!(
+            format!("{}", Instruction::Se((Operand::Gpr(1), Operand::Gpr(2)))),
+            "SE V1, V2"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                Instruction::Ld((Operand::Gpr(1), Operand::Byte(0x12)))
+            ),
+            "LD V1, 0x12"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                Instruction::Add((Operand::Gpr(1), Operand::Byte(0x12)))
+            ),
+            "ADD V1, 0x12"
+        );
+        assert_eq!(
+            format!("{}", Instruction::Ld((Operand::Gpr(1), Operand::Gpr(2)))),
+            "LD V1, V2"
+        );
+        assert_eq!(
+            format!("{}", Instruction::Or((Operand::Gpr(1), Operand::Gpr(2)))),
+            "OR V1, V2"
+        );
+        assert_eq!(
+            format!("{}", Instruction::And((Operand::Gpr(1), Operand::Gpr(2)))),
+            "AND V1, V2"
+        );
+        assert_eq!(
+            format!("{}", Instruction::Xor((Operand::Gpr(1), Operand::Gpr(2)))),
+            "XOR V1, V2"
+        );
+        assert_eq!(
+            format!("{}", Instruction::Add((Operand::Gpr(1), Operand::Gpr(2)))),
+            "ADD V1, V2"
+        );
+        assert_eq!(
+            format!("{}", Instruction::Shr((Operand::Gpr(1), Operand::Gpr(2)))),
+            "Shr V1, V2"
+        );
+        assert_eq!(
+            format!("{}", Instruction::Subn((Operand::Gpr(1), Operand::Gpr(2)))),
+            "SUBN V1, V2"
+        );
+        assert_eq!(
+            format!("{}", Instruction::Shl((Operand::Gpr(1), Operand::Gpr(2)))),
+            "SHL V1, V2"
+        );
+        assert_eq!(
+            format!("{}", Instruction::Sne((Operand::Gpr(1), Operand::Gpr(2)))),
+            "SNE V1, V2"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                Instruction::Ld((Operand::Addr, Operand::Address(0xEEE)))
+            ),
+            "LD I, [0xeee]"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                Instruction::Ld((Operand::Gpr(0), Operand::Address(0xEDD)))
+            ),
+            "LD V0, [0xedd]"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                Instruction::Rnd((Operand::Gpr(0xA), Operand::Byte(0x53)))
+            ),
+            "RND Va, 0x53"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                Instruction::Drw((Operand::Gpr(0xA), Operand::Gpr(0xB), Operand::Nibble(0x3)))
+            ),
+            "DRW Va, Vb, 0x3"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                Instruction::Ld((Operand::Gpr(0x8), Operand::DelayTimer))
+            ),
+            "LD V8, DT"
+        );
+        assert_eq!(
+            format!("{}", Instruction::Ld((Operand::Gpr(0x8), Operand::Key))),
+            "LD V8, K"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                Instruction::Ld((Operand::DelayTimer, Operand::Gpr(0x8)))
+            ),
+            "LD DT, V8"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                Instruction::Ld((Operand::SoundTimer, Operand::Gpr(0x8)))
+            ),
+            "LD ST, V8"
+        );
+        assert_eq!(
+            format!("{}", Instruction::Add((Operand::Addr, Operand::Gpr(0x8)))),
+            "ADD I, V8"
+        );
+        assert_eq!(
+            format!("{}", Instruction::Ld((Operand::Font, Operand::Gpr(0x8)))),
+            "LD F, V8"
+        );
+        assert_eq!(
+            format!("{}", Instruction::Ld((Operand::Bcd, Operand::Gpr(0x8)))),
+            "LD B, V8"
+        );
+        assert_eq!(
+            format!("{}", Instruction::Ld((Operand::Memory, Operand::Gpr(0x8)))),
+            "LD [I], V8"
+        );
+        assert_eq!(
+            format!("{}", Instruction::Ld((Operand::Gpr(0x8), Operand::Memory))),
+            "LD V8, [I]"
+        );
+    }
 
     #[test]
     fn format_operand() {
