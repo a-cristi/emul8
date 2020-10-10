@@ -1,5 +1,7 @@
 //! A CHIP8 instruction decoder.
 
+use std::fmt;
+
 /// An Operand of a CHIP8 instruction.
 #[derive(Debug, PartialEq)]
 pub enum Operand {
@@ -29,6 +31,25 @@ pub enum Operand {
     Font,
     /// The instruction operated on a BCD representation.
     Bcd,
+}
+
+impl fmt::Display for Operand {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Operand::Address(addr) => write!(f, "[{:#05x}]", addr),
+            Operand::Gpr(index) => write!(f, "V{:x}", index),
+            Operand::Flags => write!(f, "Vf"),
+            Operand::Byte(value) => write!(f, "{:#04x}", value),
+            Operand::Nibble(value) => write!(f, "{:#x}", value),
+            Operand::Addr => write!(f, "I"),
+            Operand::Memory => write!(f, "[I]"),
+            Operand::DelayTimer => write!(f, "DT"),
+            Operand::SoundTimer => write!(f, "ST"),
+            Operand::Key => write!(f, "K"),
+            Operand::Font => write!(f, "F"),
+            Operand::Bcd => write!(f, "B"),
+        }
+    }
 }
 
 /// Represents a decoded CHIP8 instruction. See http://devernay.free.fr/hacks/chip8/C8TECH10.HTM for details.
@@ -119,7 +140,10 @@ pub fn decode(code: &[u8; 2]) -> Option<Instruction> {
         0x0 => Some(Instruction::Sys(make_address(code))), // 0nnn
         0x1 => Some(Instruction::Jp(make_address(code))),  // 1nnn
         0x2 => Some(Instruction::Call(make_address(code))), // 2nnn
-        0x3 => Some(Instruction::Se((make_gpr(code[0] & 0xF), make_byte(code[1])))), // 3xkk
+        0x3 => Some(Instruction::Se((
+            make_gpr(code[0] & 0xF),
+            make_byte(code[1]),
+        ))), // 3xkk
         0x4 => Some(Instruction::Sne((
             make_gpr(code[0] & 0xF),
             make_byte(code[1]),
@@ -132,7 +156,10 @@ pub fn decode(code: &[u8; 2]) -> Option<Instruction> {
             ))),
             _ => None,
         },
-        0x6 => Some(Instruction::Ld((make_gpr(code[0] & 0xF), make_byte(code[1])))), // 6xkk
+        0x6 => Some(Instruction::Ld((
+            make_gpr(code[0] & 0xF),
+            make_byte(code[1]),
+        ))), // 6xkk
         0x7 => Some(Instruction::Add((
             make_gpr(code[0] & 0xF),
             make_byte(code[1]),
@@ -194,7 +221,7 @@ pub fn decode(code: &[u8; 2]) -> Option<Instruction> {
             _ => None,
         },
         0xA => Some(Instruction::Ld((Operand::Addr, make_address(code)))), // Annn
-        0xB => Some(Instruction::Ld((make_gpr(0), make_address(code)))),    // Bnnn
+        0xB => Some(Instruction::Ld((make_gpr(0), make_address(code)))),   // Bnnn
         0xC => Some(Instruction::Rnd((
             make_gpr(code[0] & 0xF),
             make_byte(code[1]),
@@ -247,22 +274,22 @@ pub fn decode(code: &[u8; 2]) -> Option<Instruction> {
 }
 
 /// Returns an `Operand::Address` that wraps a `u8` value.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `code` - The instruction from which the 12-bits address will be extracted.
 fn make_address(code: &[u8; 2]) -> Operand {
     Operand::Address(((code[0] as u16 & 0xF) << 8) | code[1] as u16)
 }
 
 /// Returns a general purpose register or a flags operand.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `index` - The register index.
-/// 
+///
 /// # Returns
-/// 
+///
 /// * If `index` is less than 15, returns a `Operand::Gpr` variant that wraps the `index`.
 /// * Else, returns `Operand::Flags`.
 fn make_gpr(index: u8) -> Operand {
@@ -274,22 +301,22 @@ fn make_gpr(index: u8) -> Operand {
 }
 
 /// Returns an `Operand::Byte` that wraps a `u8` value.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `value` - The value of the byte.
 fn make_byte(value: u8) -> Operand {
     Operand::Byte(value)
 }
 
 /// Returns an `Operand::Nibble` that wraps a `u8` value.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `value` - The value of the byte.
-/// 
+///
 /// # Errors
-/// 
+///
 /// If `value` does not fit in 4-bytes (it is higher than 15), the function panics.
 fn make_nibble(value: u8) -> Operand {
     assert!(value <= 0xF, "Nibble value can not be hifger than 0xF!");
@@ -299,6 +326,37 @@ fn make_nibble(value: u8) -> Operand {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn format_operand() {
+        assert_eq!(format!("{}", Operand::Address(0xF23)), "[0xf23]");
+        assert_eq!(format!("{}", Operand::Address(0xAB)), "[0x0ab]");
+        assert_eq!(format!("{}", Operand::Address(0x1)), "[0x001]");
+
+        assert_eq!(format!("{}", Operand::Gpr(0)), "V0");
+        assert_eq!(format!("{}", Operand::Gpr(0xE)), "Ve");
+
+        assert_eq!(format!("{}", Operand::Flags), "Vf");
+
+        assert_eq!(format!("{}", Operand::Byte(0x2)), "0x02");
+        assert_eq!(format!("{}", Operand::Byte(0xFF)), "0xff");
+
+        assert_eq!(format!("{}", Operand::Nibble(7)), "0x7");
+
+        assert_eq!(format!("{}", Operand::Addr), "I");
+
+        assert_eq!(format!("{}", Operand::Memory), "[I]");
+
+        assert_eq!(format!("{}", Operand::DelayTimer), "DT");
+
+        assert_eq!(format!("{}", Operand::SoundTimer), "ST");
+
+        assert_eq!(format!("{}", Operand::Key), "K");
+
+        assert_eq!(format!("{}", Operand::Font), "F");
+
+        assert_eq!(format!("{}", Operand::Bcd), "B");
+    }
 
     #[test]
     fn decoder() {
