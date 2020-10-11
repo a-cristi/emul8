@@ -1,3 +1,1 @@
-/target
-/decoder/target
-/c8d/target
+**/target
