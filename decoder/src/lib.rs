@@ -18,7 +18,7 @@ pub enum Operand {
     /// An 4-bit value. The inner `u8` holds this value. It will never be higher than `0xF`.
     Nibble(u8),
     /// The special 16-bit `I` register used to hold addresses.
-    Addr,
+    AddrReg,
     /// The instruction accesses a memory range.
     Memory,
     /// Delay timer register.
@@ -41,7 +41,7 @@ impl fmt::Display for Operand {
             Operand::Flags => write!(f, "Vf"),
             Operand::Byte(value) => write!(f, "{:#04x}", value),
             Operand::Nibble(value) => write!(f, "{:#x}", value),
-            Operand::Addr => write!(f, "I"),
+            Operand::AddrReg => write!(f, "I"),
             Operand::Memory => write!(f, "[I]"),
             Operand::DelayTimer => write!(f, "DT"),
             Operand::SoundTimer => write!(f, "ST"),
@@ -250,7 +250,7 @@ pub fn decode(code: &[u8; 2]) -> Option<Instruction> {
             ))),
             _ => None,
         },
-        0xA => Some(Instruction::Ld((Operand::Addr, make_address(code)))), // Annn
+        0xA => Some(Instruction::Ld((Operand::AddrReg, make_address(code)))), // Annn
         0xB => Some(Instruction::Jp((make_gpr(0), Some(make_address(code))))), // Bnnn
         0xC => Some(Instruction::Rnd((
             make_gpr(code[0] & 0xF),
@@ -288,7 +288,10 @@ pub fn decode(code: &[u8; 2]) -> Option<Instruction> {
                 make_gpr(code[0] & 0xF),
             ))),
             // Fx1E
-            0x1E => Some(Instruction::Add((Operand::Addr, make_gpr(code[0] & 0xF)))),
+            0x1E => Some(Instruction::Add((
+                Operand::AddrReg,
+                make_gpr(code[0] & 0xF),
+            ))),
             // Fx29
             0x29 => Some(Instruction::Ld((Operand::Font, make_gpr(code[0] & 0xF)))),
             // Fx33
@@ -464,7 +467,7 @@ mod tests {
         assert_eq!(
             format!(
                 "{}",
-                Instruction::Ld((Operand::Addr, Operand::Address(0xEEE)))
+                Instruction::Ld((Operand::AddrReg, Operand::Address(0xEEE)))
             ),
             "LD I, [0xeee]"
         );
@@ -515,7 +518,10 @@ mod tests {
             "LD ST, V8"
         );
         assert_eq!(
-            format!("{}", Instruction::Add((Operand::Addr, Operand::Gpr(0x8)))),
+            format!(
+                "{}",
+                Instruction::Add((Operand::AddrReg, Operand::Gpr(0x8)))
+            ),
             "ADD I, V8"
         );
         assert_eq!(
@@ -552,7 +558,7 @@ mod tests {
 
         assert_eq!(format!("{}", Operand::Nibble(7)), "0x7");
 
-        assert_eq!(format!("{}", Operand::Addr), "I");
+        assert_eq!(format!("{}", Operand::AddrReg), "I");
 
         assert_eq!(format!("{}", Operand::Memory), "[I]");
 
@@ -720,7 +726,7 @@ mod tests {
         let code: [u8; 2] = [0xAE, 0xEE];
         assert_eq!(
             decode(&code).unwrap(),
-            Instruction::Ld((Operand::Addr, Operand::Address(0xEEE)))
+            Instruction::Ld((Operand::AddrReg, Operand::Address(0xEEE)))
         );
 
         let code: [u8; 2] = [0xCA, 0x53];
@@ -771,7 +777,7 @@ mod tests {
         let code: [u8; 2] = [0xF8, 0x1E];
         assert_eq!(
             decode(&code).unwrap(),
-            Instruction::Add((Operand::Addr, Operand::Gpr(0x8)))
+            Instruction::Add((Operand::AddrReg, Operand::Gpr(0x8)))
         );
 
         let code: [u8; 2] = [0xF8, 0x29];
