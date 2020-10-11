@@ -63,7 +63,7 @@ pub enum Instruction {
     Ret,
     /// `JP addr/V0, addr` - Jumps at `addr` or `addr + V0`.
     /// The operand is always `Operand::Address`. The form that uses `V0` has it as an implicit operand.
-    Jp(Operand),
+    Jp((Operand, Option<Operand>)),
     /// `CALL addr` - Calls the subroutine at `addr`.
     Call(Operand),
     /// `SE Vx, byte/Vx, Vy` - Skips the next instruction if the first operand is equal to the second operand.
@@ -108,7 +108,10 @@ impl fmt::Display for Instruction {
             Instruction::Sys(o) => write!(f, "SYS {}", o),
             Instruction::Cls => write!(f, "CLS"),
             Instruction::Ret => write!(f, "RET"),
-            Instruction::Jp(o) => write!(f, "JP {}", o),
+            Instruction::Jp((o1, o2)) => match o2 {
+                Some(o) => write!(f, "JP {}, {}", o1, o),
+                None => write!(f, "JP {}", o1),
+            },
             Instruction::Call(o) => write!(f, "CALL {}", o),
             Instruction::Se((o1, o2)) => write!(f, "SE {}, {}", o1, o2),
             Instruction::Sne((o1, o2)) => write!(f, "SNE {}, {}", o1, o2),
@@ -165,7 +168,7 @@ pub fn decode(code: &[u8; 2]) -> Option<Instruction> {
 
     match ins {
         0x0 => Some(Instruction::Sys(make_address(code))), // 0nnn
-        0x1 => Some(Instruction::Jp(make_address(code))),  // 1nnn
+        0x1 => Some(Instruction::Jp((make_address(code), None))), // 1nnn
         0x2 => Some(Instruction::Call(make_address(code))), // 2nnn
         0x3 => Some(Instruction::Se((
             make_gpr(code[0] & 0xF),
@@ -248,7 +251,7 @@ pub fn decode(code: &[u8; 2]) -> Option<Instruction> {
             _ => None,
         },
         0xA => Some(Instruction::Ld((Operand::Addr, make_address(code)))), // Annn
-        0xB => Some(Instruction::Ld((make_gpr(0), make_address(code)))),   // Bnnn
+        0xB => Some(Instruction::Jp((make_gpr(0), Some(make_address(code))))), // Bnnn
         0xC => Some(Instruction::Rnd((
             make_gpr(code[0] & 0xF),
             make_byte(code[1]),
@@ -365,8 +368,15 @@ mod tests {
             "SYS [0x123]"
         );
         assert_eq!(
-            format!("{}", Instruction::Jp(Operand::Address(0xFFF))),
+            format!("{}", Instruction::Jp((Operand::Address(0xFFF), None))),
             "JP [0xfff]"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                Instruction::Jp((Operand::Gpr(0), Some(Operand::Address(0x123))))
+            ),
+            "JP V0, [0x123]"
         );
         assert_eq!(
             format!("{}", Instruction::Call(Operand::Address(0xFFF))),
@@ -580,7 +590,13 @@ mod tests {
         let code: [u8; 2] = [0x1F, 0xFF];
         assert_eq!(
             decode(&code).unwrap(),
-            Instruction::Jp(Operand::Address(0xFFF))
+            Instruction::Jp((Operand::Address(0xFFF), None))
+        );
+
+        let code: [u8; 2] = [0xB1, 0x23];
+        assert_eq!(
+            decode(&code).unwrap(),
+            Instruction::Jp((Operand::Gpr(0), Some(Operand::Address(0x123))))
         );
 
         let code: [u8; 2] = [0x2F, 0xFF];
@@ -705,12 +721,6 @@ mod tests {
         assert_eq!(
             decode(&code).unwrap(),
             Instruction::Ld((Operand::Addr, Operand::Address(0xEEE)))
-        );
-
-        let code: [u8; 2] = [0xBE, 0xDD];
-        assert_eq!(
-            decode(&code).unwrap(),
-            Instruction::Ld((Operand::Gpr(0), Operand::Address(0xEDD)))
         );
 
         let code: [u8; 2] = [0xCA, 0x53];
