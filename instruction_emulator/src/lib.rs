@@ -385,6 +385,9 @@ impl<'a> InstructionEmulator<'a> {
                         result &= 0xFF;
                         self.register_state.flags = 1;
                     }
+                } else {
+                    // TODO: should VF be reset here?
+                    self.register_state.flags = 0;
                 }
 
                 // Store the result.
@@ -1085,9 +1088,18 @@ mod tests {
 
         let mut emu = InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
 
+        // LD Vx, byte
+        emu.register_state.gprs[0] = 0;
+        assert_eq!(
+            emu.emulate_internal(Instruction::Ld((Operand::Gpr(0), Operand::Byte(2))))
+                .unwrap(),
+            true
+        );
+        assert_eq!(emu.register_state.gprs[0], 2);
+
+        // LD Vx, Vy
         emu.register_state.gprs[0] = 0;
         emu.register_state.gprs[1] = 1;
-
         assert_eq!(
             emu.emulate_internal(Instruction::Ld((Operand::Gpr(0), Operand::Gpr(1))))
                 .unwrap(),
@@ -1095,7 +1107,60 @@ mod tests {
         );
         assert_eq!(emu.register_state.gprs[0], 1);
 
-        // TODO: Test all the other LD variants.
+        // LD I, addr
+        emu.register_state.address_reg = 0;
+        assert_eq!(
+            emu.emulate_internal(Instruction::Ld((Operand::AddrReg, Operand::Address(0x200))))
+                .unwrap(),
+            true
+        );
+        assert_eq!(emu.register_state.address_reg, 0x200);
+
+        // LD Vx, DT
+        emu.register_state.gprs[0] = 0;
+        emu.register_state.delay_timer = 10;
+        assert_eq!(
+            emu.emulate_internal(Instruction::Ld((Operand::Gpr(0), Operand::DelayTimer)))
+                .unwrap(),
+            true
+        );
+        assert_eq!(emu.register_state.gprs[0], 10);
+
+        // LD DT, Vx
+        emu.register_state.delay_timer = 0;
+        emu.register_state.gprs[1] = 12;
+        assert_eq!(
+            emu.emulate_internal(Instruction::Ld((Operand::DelayTimer, Operand::Gpr(1))))
+                .unwrap(),
+            true
+        );
+        assert_eq!(emu.register_state.delay_timer, 12);
+
+        // LD Vx, ST
+        emu.register_state.gprs[0] = 0;
+        emu.register_state.sound_timer = 16;
+        assert_eq!(
+            emu.emulate_internal(Instruction::Ld((Operand::Gpr(0), Operand::SoundTimer)))
+                .unwrap(),
+            true
+        );
+        assert_eq!(emu.register_state.gprs[0], 16);
+
+        // LD ST, Vx
+        emu.register_state.sound_timer = 0;
+        emu.register_state.gprs[1] = 14;
+        assert_eq!(
+            emu.emulate_internal(Instruction::Ld((Operand::SoundTimer, Operand::Gpr(1))))
+                .unwrap(),
+            true
+        );
+        assert_eq!(emu.register_state.sound_timer, 14);
+
+        // TODO: Test LD Vx, K
+        // TODO: Test LD F, Vx
+        // TODO: Test LD B, Vx
+        // TODO: Test LD [I], Vx
+        // TODO: Test LD Vx, [I]
     }
 
     #[test]
@@ -1106,18 +1171,21 @@ mod tests {
 
         let mut emu = InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
 
+        // ADD Vx, Vy (no overflow)
         emu.register_state.gprs[0] = 2;
         emu.register_state.gprs[1] = 1;
-
+        emu.register_state.flags = 1;
         assert_eq!(
             emu.emulate_internal(Instruction::Add((Operand::Gpr(0), Operand::Gpr(1))))
                 .unwrap(),
             true
         );
         assert_eq!(emu.register_state.gprs[0], 3);
+        assert_eq!(emu.register_state.flags, 0);
 
+        // ADD Vx, byte (with overflow)
         emu.register_state.gprs[0] = 0xff;
-
+        emu.register_state.flags = 0;
         assert_eq!(
             emu.emulate_internal(Instruction::Add((Operand::Gpr(0), Operand::Byte(1))))
                 .unwrap(),
@@ -1125,6 +1193,17 @@ mod tests {
         );
         assert_eq!(emu.register_state.gprs[0], 0);
         assert_eq!(emu.register_state.flags, 1);
+
+        // ADD I, Vx
+        emu.register_state.address_reg = 0x200;
+        emu.register_state.gprs[3] = 0x10;
+        assert_eq!(
+            emu.emulate_internal(Instruction::Add((Operand::AddrReg, Operand::Gpr(3))))
+                .unwrap(),
+            true
+        );
+        assert_eq!(emu.register_state.address_reg, 0x210);
+        assert_eq!(emu.register_state.flags, 0);
 
         // TODO: Test all the other ADD variants.
     }
