@@ -55,7 +55,7 @@ pub trait Memory {
     ///
     /// * A `Some` variant that holds the value of the byte at `address`
     /// * `None` in case of an error
-    fn read(&self, address: u16) -> Option<u8>;
+    fn read(&mut self, address: u16) -> Option<u8>;
 
     /// Writes a byte to memory.
     ///
@@ -130,6 +130,10 @@ pub enum EmulationError {
     SetOperandValueOverflow,
     /// The program counter overflowed.
     PcOverflow,
+    /// Unable to write memory. Wraps the address for which the write failed.
+    MemoryWriteError(u16),
+    /// Unable to read memory. Wraps the address for which the read failed.
+    MemoryReadError(u16),
 }
 
 impl fmt::Display for EmulationError {
@@ -148,6 +152,12 @@ impl fmt::Display for EmulationError {
                 write!(f, "Value too large for given operand")
             }
             EmulationError::PcOverflow => write!(f, "PC underflow"),
+            EmulationError::MemoryWriteError(addr) => {
+                write!(f, "Unable to write memory address {:#06x}", addr)
+            }
+            EmulationError::MemoryReadError(addr) => {
+                write!(f, "Unable to read memory address {:#06x}", addr)
+            }
         }
     }
 }
@@ -360,8 +370,17 @@ impl<'a> InstructionEmulator<'a> {
                 Ok(true)
             }
             Instruction::Ld((op1, op2)) => {
-                // Set the first operand to the value of the second operand.
-                self.set_operand_value(&op1, self.get_operand_value(&op2))?;
+                if let Operand::Memory = op1 {
+                    // Special case for LD [I], Vx.
+                    self.store_gprs_to_memory(op2)?;
+                } else if let Operand::Memory = op2 {
+                    // Special case for LD Vx, [I]
+                    self.load_gprs_from_memory(op1)?;
+                } else {
+                    // All the other cases.
+                    // Set the first operand to the value of the second operand.
+                    self.set_operand_value(&op1, self.get_operand_value(&op2))?;
+                }
 
                 // Update PC.
                 Ok(true)
@@ -628,8 +647,13 @@ impl<'a> InstructionEmulator<'a> {
     ///
     /// # Errors
     ///
-    /// If `value` does not fit inside the given operand the function returns `EmulationError::SetOperandValueOverflow`.    ///
-    /// For operands that do not support this operation the function returns. `EmulationError::InvalidSetOperandRequest`.
+    /// If `value` does not fit inside the given operand the function returns `EmulationError::SetOperandValueOverflow`.
+    /// For operands that do not support this operation the function returns `EmulationError::InvalidSetOperandRequest`. These operands are:
+    ///
+    /// * `Operand::Memory`
+    /// * `Operand::Key`
+    /// * `Operand::Font`
+    /// * `Operand::Bcd`
     fn set_operand_value(&mut self, op: &Operand, value: u16) -> Result<(), EmulationError> {
         match *op {
             Operand::Address(_) => Err(EmulationError::InvalidSetOperandRequest),
@@ -684,6 +708,125 @@ impl<'a> InstructionEmulator<'a> {
             Operand::Font => Err(EmulationError::InvalidSetOperandRequest),
             Operand::Bcd => Err(EmulationError::InvalidSetOperandRequest),
         }
+    }
+
+    /// Handles `Fx55`: `LD [I], Vx`.
+    ///
+    /// # Arguments
+    ///
+    /// - `op` - The operand that describes the last register to store (esentially it is `Vx`).
+    ///
+    /// # Errors
+    ///
+    /// If memory can not be written returns an `EmulationError::MemoryWriteError` that wraps the address for which the write failed.
+    ///
+    /// If `op` is not `Operand::Gpr` or `Operand::Flags` the function panics.
+    fn store_gprs_to_memory(&mut self, op: Operand) -> Result<(), EmulationError> {
+        // Store registers `V0 `through `Vx` into memory starting at location held by `I`.
+        // `I` is not incremented.
+
+        // Get the starting address.
+        let base_address = self.register_state.address_reg;
+
+        // Get the index of the upper register.
+        let index = match op {
+            Operand::Gpr(i) => i,
+            Operand::Flags => 15,
+            _ => unreachable!(),
+        };
+
+        assert!(
+            index <= 0xF,
+            "Invalid `Vx` index when storing registers into memory!"
+        );
+
+        // Go through all the registers, starting from `V0`.
+        // Because we represent `VF` as a dedicated register we write the last one at the end.
+        for i in 0..index {
+            self.memory
+                .write(
+                    base_address + i as u16,
+                    self.register_state.gprs[i as usize],
+                )
+                .ok_or(EmulationError::MemoryWriteError(base_address + i as u16))?;
+        }
+
+        // Check if we should also write `VF`.
+        if index == 0xf {
+            self.memory
+                .write(base_address + index as u16, self.register_state.flags)
+                .ok_or(EmulationError::MemoryWriteError(
+                    base_address + index as u16,
+                ))?;
+        } else {
+            // Just a GPR.
+            self.memory
+                .write(
+                    base_address + index as u16,
+                    self.register_state.gprs[index as usize],
+                )
+                .ok_or(EmulationError::MemoryWriteError(
+                    base_address + index as u16,
+                ))?;
+        }
+
+        Ok(())
+    }
+
+    /// Handles `Fx65`: `LD Vx, [I]`
+    ///
+    /// # Arguments
+    ///
+    /// - `op` - The operand that describes the last register to load (esentially it is `Vx`).
+    ///
+    /// # Errors
+    ///
+    /// If memory can not be read returns an `EmulationError::MemoryReadError` that wraps the address for which the read failed.
+    ///
+    /// If `op` is not `Operand::Gpr` or `Operand::Flags` the function panics.
+    fn load_gprs_from_memory(&mut self, op: Operand) -> Result<(), EmulationError> {
+        // Load registers `V0 `through `Vx` into memory starting at location held by `I`.
+        // `I` is not incremented.
+
+        // Get the starting address.
+        let base_address = self.register_state.address_reg;
+
+        // Get the index of the upper register.
+        let index = match op {
+            Operand::Gpr(i) => i,
+            Operand::Flags => 15,
+            _ => unreachable!(),
+        };
+
+        assert!(
+            index <= 0xF,
+            "Invalid `Vx` index when loading registers from memory!"
+        );
+
+        // Go through all the registers, starting from `V0`.
+        // Because we represent `VF` as a dedicated register we read the last one at the end.
+        for i in 0..index {
+            self.register_state.gprs[i as usize] = self
+                .memory
+                .read(base_address + i as u16)
+                .ok_or(EmulationError::MemoryReadError(base_address + i as u16))?;
+        }
+
+        // Check if we should also load `VF`.
+        if index == 0xf {
+            self.register_state.flags = self
+                .memory
+                .read(base_address + index as u16)
+                .ok_or(EmulationError::MemoryReadError(base_address + index as u16))?;
+        } else {
+            // Just a GPR.
+            self.register_state.gprs[index as usize] = self
+                .memory
+                .read(base_address + index as u16)
+                .ok_or(EmulationError::MemoryReadError(base_address + index as u16))?;
+        }
+
+        Ok(())
     }
 
     /// Pushes a value onto the stack.
@@ -792,7 +935,7 @@ mod tests {
     }
 
     impl Memory for TestMemory {
-        fn read(&self, _address: u16) -> Option<u8> {
+        fn read(&mut self, _address: u16) -> Option<u8> {
             Some(0)
         }
         fn write(&mut self, _address: u16, _value: u8) -> Option<()> {
@@ -1159,8 +1302,6 @@ mod tests {
         // TODO: Test LD Vx, K
         // TODO: Test LD F, Vx
         // TODO: Test LD B, Vx
-        // TODO: Test LD [I], Vx
-        // TODO: Test LD Vx, [I]
     }
 
     #[test]
@@ -1204,8 +1345,6 @@ mod tests {
         );
         assert_eq!(emu.register_state.address_reg, 0x210);
         assert_eq!(emu.register_state.flags, 0);
-
-        // TODO: Test all the other ADD variants.
     }
 
     #[test]
@@ -1418,4 +1557,427 @@ mod tests {
     // TODO: test DRW
     // TODO: test SKP
     // TODO: test SKNP
+
+    #[derive(Debug, Default)]
+    struct MockMemoryWriteExpectation {
+        // `None` means that we don't care about the address.
+        address: Option<u16>,
+        // `None` means that we don't care about the value.
+        value: Option<u8>,
+        // This is the actual value returned by the function.
+        result: Option<()>,
+    }
+
+    #[derive(Debug, Default)]
+    struct MockMemoryReadExpectation {
+        // `None` means that we don't care about the address.
+        address: Option<u16>,
+        // This is the actual value returned by the function.
+        result: Option<u8>,
+    }
+
+    #[derive(Debug, Default)]
+    struct MockMemory {
+        expected_writes: Vec<MockMemoryWriteExpectation>,
+        expected_reads: Vec<MockMemoryReadExpectation>,
+    }
+
+    impl Memory for MockMemory {
+        fn read(&mut self, address: u16) -> Option<u8> {
+            // This will panic if we don't expect a read.
+            let expectation = self.expected_reads.remove(0);
+
+            if let Some(expected_address) = expectation.address {
+                assert_eq!(address, expected_address);
+            }
+
+            expectation.result
+        }
+
+        fn write(&mut self, address: u16, value: u8) -> Option<()> {
+            // This will panic if we don't expect a write.
+            let expectation = self.expected_writes.remove(0);
+
+            if let Some(expected_address) = expectation.address {
+                assert_eq!(address, expected_address);
+            }
+
+            if let Some(expected_value) = expectation.value {
+                assert_eq!(value, expected_value);
+            }
+
+            expectation.result
+        }
+    }
+
+    #[test]
+    fn store_v0_to_memory() {
+        let mut screen = TestScreen {};
+        let mut keyboard = TestKeyboard {};
+        let mut memory = MockMemory::default();
+
+        let address = 0x200 as u16;
+        let value = 0x10 as u8;
+
+        memory.expected_writes.push(MockMemoryWriteExpectation {
+            address: Some(address),
+            value: Some(value),
+            result: Some(()),
+        });
+
+        let mut emu = InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
+
+        emu.register_state.address_reg = address;
+        emu.register_state.gprs[0] = value;
+
+        assert_eq!(emu.store_gprs_to_memory(Operand::Gpr(0)).unwrap(), ());
+        assert_eq!(emu.register_state.address_reg, 0x200);
+
+        assert_eq!(memory.expected_writes.len(), 0);
+    }
+
+    #[test]
+    fn store_v0_ve_to_memory() {
+        let mut screen = TestScreen {};
+        let mut keyboard = TestKeyboard {};
+        let mut memory = MockMemory::default();
+
+        let base_address = 0x300 as u16;
+
+        for i in 0..=0xE {
+            memory.expected_writes.push(MockMemoryWriteExpectation {
+                address: Some(base_address + i),
+                value: Some(i as u8),
+                result: Some(()),
+            });
+        }
+
+        let mut emu = InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
+
+        emu.register_state.address_reg = base_address;
+        for i in 0..=0xE {
+            emu.register_state.gprs[i] = i as u8;
+        }
+
+        assert_eq!(emu.store_gprs_to_memory(Operand::Gpr(0xE)).unwrap(), ());
+        assert_eq!(emu.register_state.address_reg, 0x300);
+
+        assert_eq!(memory.expected_writes.len(), 0);
+    }
+
+    #[test]
+    fn store_v0_vf_to_memory() {
+        let mut screen = TestScreen {};
+        let mut keyboard = TestKeyboard {};
+        let mut memory = MockMemory::default();
+
+        let base_address = 0x300 as u16;
+
+        for i in 0..=0xE {
+            memory.expected_writes.push(MockMemoryWriteExpectation {
+                address: Some(base_address + i),
+                value: Some(i as u8),
+                result: Some(()),
+            });
+        }
+
+        memory.expected_writes.push(MockMemoryWriteExpectation {
+            address: Some(base_address + 0xF),
+            value: Some(0xF),
+            result: Some(()),
+        });
+
+        let mut emu = InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
+
+        emu.register_state.address_reg = base_address;
+        for i in 0..=0xE {
+            emu.register_state.gprs[i] = i as u8;
+        }
+        emu.register_state.flags = 0xf;
+
+        assert_eq!(emu.store_gprs_to_memory(Operand::Gpr(0xF)).unwrap(), ());
+        assert_eq!(emu.register_state.address_reg, 0x300);
+
+        assert_eq!(memory.expected_writes.len(), 0);
+    }
+
+    #[test]
+    fn store_to_memory_errors() {
+        let mut screen = TestScreen {};
+        let mut keyboard = TestKeyboard {};
+        let mut memory = MockMemory::default();
+
+        let address = 0x200 as u16;
+        let value = 0x10 as u8;
+
+        memory.expected_writes.push(MockMemoryWriteExpectation {
+            address: Some(address),
+            value: Some(value),
+            result: Some(()),
+        });
+        memory.expected_writes.push(MockMemoryWriteExpectation {
+            address: None,
+            value: None,
+            result: None,
+        });
+
+        let mut emu = InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
+
+        emu.register_state.address_reg = address;
+        emu.register_state.gprs[0] = value;
+
+        assert_eq!(
+            emu.store_gprs_to_memory(Operand::Gpr(1)).unwrap_err(),
+            EmulationError::MemoryWriteError(address + 1)
+        );
+        assert_eq!(emu.register_state.address_reg, 0x200);
+
+        assert_eq!(memory.expected_writes.len(), 0);
+    }
+
+    #[test]
+    fn load_v0_from_memory() {
+        let mut screen = TestScreen {};
+        let mut keyboard = TestKeyboard {};
+        let mut memory = MockMemory::default();
+
+        let address = 0x200 as u16;
+        let value = 0x10 as u8;
+
+        memory.expected_reads.push(MockMemoryReadExpectation {
+            address: Some(address),
+            result: Some(value),
+        });
+
+        let mut emu = InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
+
+        emu.register_state.address_reg = address;
+
+        assert_eq!(emu.load_gprs_from_memory(Operand::Gpr(0)).unwrap(), ());
+        assert_eq!(emu.register_state.address_reg, 0x200);
+        assert_eq!(emu.register_state.gprs[0], value);
+
+        assert_eq!(memory.expected_reads.len(), 0);
+    }
+
+    #[test]
+    fn load_v0_ve_from_memory() {
+        let mut screen = TestScreen {};
+        let mut keyboard = TestKeyboard {};
+        let mut memory = MockMemory::default();
+
+        let base_address = 0x300 as u16;
+
+        for i in 0..=0xE {
+            memory.expected_reads.push(MockMemoryReadExpectation {
+                address: Some(base_address + i),
+                result: Some(i as u8),
+            });
+        }
+
+        let mut emu = InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
+
+        emu.register_state.address_reg = base_address;
+
+        assert_eq!(emu.load_gprs_from_memory(Operand::Gpr(0xE)).unwrap(), ());
+        assert_eq!(emu.register_state.address_reg, 0x300);
+        for i in 0..=0xE {
+            assert_eq!(emu.register_state.gprs[i], i as u8);
+        }
+
+        assert_eq!(memory.expected_reads.len(), 0);
+    }
+
+    #[test]
+    fn load_v0_vf_from_memory() {
+        let mut screen = TestScreen {};
+        let mut keyboard = TestKeyboard {};
+        let mut memory = MockMemory::default();
+
+        let base_address = 0x300 as u16;
+
+        for i in 0..=0xE {
+            memory.expected_reads.push(MockMemoryReadExpectation {
+                address: Some(base_address + i),
+                result: Some(i as u8),
+            });
+        }
+
+        memory.expected_reads.push(MockMemoryReadExpectation {
+            address: Some(base_address + 0xF),
+            result: Some(0xF),
+        });
+
+        let mut emu = InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
+
+        emu.register_state.address_reg = base_address;
+
+        assert_eq!(emu.load_gprs_from_memory(Operand::Gpr(0xF)).unwrap(), ());
+        assert_eq!(emu.register_state.address_reg, 0x300);
+        for i in 0..=0xE {
+            assert_eq!(emu.register_state.gprs[i], i as u8);
+        }
+        assert_eq!(emu.register_state.flags, 0xf);
+
+        assert_eq!(memory.expected_reads.len(), 0);
+    }
+
+    #[test]
+    fn store_from_memory_errors() {
+        let mut screen = TestScreen {};
+        let mut keyboard = TestKeyboard {};
+        let mut memory = MockMemory::default();
+
+        let address = 0x200 as u16;
+        let value = 0x10 as u8;
+
+        memory.expected_reads.push(MockMemoryReadExpectation {
+            address: Some(address),
+            result: Some(value),
+        });
+        memory.expected_reads.push(MockMemoryReadExpectation {
+            address: None,
+            result: None,
+        });
+
+        let mut emu = InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
+
+        emu.register_state.address_reg = address;
+
+        assert_eq!(
+            emu.load_gprs_from_memory(Operand::Gpr(1)).unwrap_err(),
+            EmulationError::MemoryReadError(address + 1)
+        );
+        assert_eq!(emu.register_state.address_reg, 0x200);
+        assert_eq!(emu.register_state.gprs[0], value);
+
+        assert_eq!(memory.expected_reads.len(), 0);
+    }
+
+    #[test]
+    fn emulate_ld_i_v0() {
+        let mut screen = TestScreen {};
+        let mut keyboard = TestKeyboard {};
+        let mut memory = MockMemory::default();
+
+        let address = 0x200 as u16;
+        let value = 0x10 as u8;
+
+        memory.expected_writes.push(MockMemoryWriteExpectation {
+            address: Some(address),
+            value: Some(value),
+            result: Some(()),
+        });
+
+        let mut emu = InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
+
+        emu.register_state.address_reg = address;
+        emu.register_state.gprs[0] = value;
+
+        assert_eq!(
+            emu.emulate_internal(Instruction::Ld((Operand::Memory, Operand::Gpr(0))))
+                .unwrap(),
+            true
+        );
+        assert_eq!(emu.register_state.address_reg, 0x200);
+
+        assert_eq!(memory.expected_writes.len(), 0);
+    }
+
+    #[test]
+    fn emulate_ld_i_v0_vx_errors() {
+        let mut screen = TestScreen {};
+        let mut keyboard = TestKeyboard {};
+        let mut memory = MockMemory::default();
+
+        let address = 0x200 as u16;
+        let value = 0x10 as u8;
+
+        memory.expected_writes.push(MockMemoryWriteExpectation {
+            address: Some(address),
+            value: Some(value),
+            result: Some(()),
+        });
+        memory.expected_writes.push(MockMemoryWriteExpectation {
+            address: None,
+            value: None,
+            result: None,
+        });
+
+        let mut emu = InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
+
+        emu.register_state.address_reg = address;
+        emu.register_state.gprs[0] = value;
+
+        assert_eq!(
+            emu.emulate_internal(Instruction::Ld((Operand::Memory, Operand::Gpr(1))))
+                .unwrap_err(),
+            EmulationError::MemoryWriteError(address + 1)
+        );
+        assert_eq!(emu.register_state.address_reg, 0x200);
+
+        assert_eq!(memory.expected_writes.len(), 0);
+    }
+
+    #[test]
+    fn emulate_ld_v0_i() {
+        let mut screen = TestScreen {};
+        let mut keyboard = TestKeyboard {};
+        let mut memory = MockMemory::default();
+
+        let address = 0x200 as u16;
+        let value = 0x10 as u8;
+
+        memory.expected_reads.push(MockMemoryReadExpectation {
+            address: Some(address),
+            result: Some(value),
+        });
+
+        let mut emu = InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
+
+        emu.register_state.address_reg = address;
+
+        assert_eq!(
+            emu.emulate_internal(Instruction::Ld((Operand::Gpr(0), Operand::Memory)))
+                .unwrap(),
+            true
+        );
+        assert_eq!(emu.register_state.address_reg, 0x200);
+        assert_eq!(emu.register_state.gprs[0], value);
+
+        assert_eq!(memory.expected_reads.len(), 0);
+    }
+
+    #[test]
+    fn emulate_ld_v0_vx_i_errors() {
+        let mut screen = TestScreen {};
+        let mut keyboard = TestKeyboard {};
+        let mut memory = MockMemory::default();
+
+        let address = 0x200 as u16;
+        let value = 0x10 as u8;
+
+        memory.expected_reads.push(MockMemoryReadExpectation {
+            address: Some(address),
+            result: Some(value),
+        });
+        memory.expected_reads.push(MockMemoryReadExpectation {
+            address: None,
+            result: None,
+        });
+
+        let mut emu = InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
+
+        emu.register_state.address_reg = address;
+
+        assert_eq!(
+            emu.emulate_internal(Instruction::Ld((Operand::Gpr(1), Operand::Memory)))
+                .unwrap_err(),
+            EmulationError::MemoryReadError(address + 1)
+        );
+        assert_eq!(emu.register_state.address_reg, 0x200);
+        assert_eq!(emu.register_state.gprs[0], value);
+
+        assert_eq!(memory.expected_reads.len(), 0);
+    }
 }
