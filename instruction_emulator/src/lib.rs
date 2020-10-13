@@ -20,7 +20,7 @@ pub trait Screen {
     ///
     /// * A `Some` variant that holds the value of a pixel in case of success
     /// * `None` in case of an error
-    fn get_pixel(&self, x: u8, y: u8) -> Option<u8>;
+    fn get_pixel(&mut self, x: u8, y: u8) -> Option<u8>;
 
     /// Sets the value of a pixel.
     ///
@@ -134,6 +134,8 @@ pub enum EmulationError {
     MemoryWriteError(u16),
     /// Unable to read memory. Wraps the address for which the read failed.
     MemoryReadError(u16),
+    /// Unable to render pixel.
+    ScreenError,
 }
 
 impl fmt::Display for EmulationError {
@@ -158,6 +160,7 @@ impl fmt::Display for EmulationError {
             EmulationError::MemoryReadError(addr) => {
                 write!(f, "Unable to read memory address {:#06x}", addr)
             }
+            EmulationError::ScreenError => write!(f, "Unable to access the screen"),
         }
     }
 }
@@ -534,11 +537,15 @@ impl<'a> InstructionEmulator<'a> {
                 Ok(true)
             }
             Instruction::Drw((op1, op2, op3)) => {
-                let _x = self.get_operand_value(&op1);
-                let _y = self.get_operand_value(&op2);
-                let _n = self.get_operand_value(&op3);
+                // Get the x and y coordinates and the number of bytes this sprite has.
+                let x = self.get_operand_value(&op1) as u8;
+                let y = self.get_operand_value(&op2) as u8;
+                let n = self.get_operand_value(&op3) as u8;
 
-                unreachable!();
+                self.draw_sprite(x, y, n)?;
+
+                // Advance PC.
+                Ok(true)
             }
             Instruction::Skp(op) => {
                 // Get the expected key value.
@@ -829,6 +836,86 @@ impl<'a> InstructionEmulator<'a> {
         Ok(())
     }
 
+    /// Reads and draws a sprite.
+    ///
+    /// # Arguments
+    ///
+    /// * `x` - The x-axis coordinates at which the drawing starts
+    /// * `y` - The y-axis coordinates at which the draeing starts
+    /// * `count` - The number of bytes to read for the sprite
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` in case of success
+    /// * `EmulationError::ScreenError` in case of error
+    fn draw_sprite(&mut self, x: u8, y: u8, count: u8) -> Result<(), EmulationError> {
+        // See https://stackoverflow.com/questions/17346592/how-does-chip-8-graphics-rendered-on-screen
+        // and http://craigthomas.ca/blog/2015/02/19/writing-a-chip-8-emulator-draw-command-part-3/.
+
+        let base_address = self.register_state.address_reg;
+
+        // Starting from `I`, read `count` bytes of memory. These bytes represent a sprite.
+        for i in 0..count {
+            let sprite_byte = self
+                .memory
+                .read(base_address + i as u16)
+                .ok_or(EmulationError::MemoryWriteError(base_address + i as u16))?;
+
+            // Coordinates on the y axis.
+            let y_pos = y + i;
+
+            // Process this byte.
+            self.draw_sprite_byte(x, y_pos, sprite_byte)?;
+        }
+
+        Ok(())
+    }
+
+    /// Draws a sprite.
+    ///
+    /// # Arguments
+    ///
+    /// * `x` - The x-axis coordinates at which the drawing starts
+    /// * `y` - The y-axis coordinates at which the draeing starts
+    /// * `count` - The number of bytes to read for the sprite
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` in case of success
+    /// * `EmulationError::ScreenError` in case of error
+    fn draw_sprite_byte(&mut self, x: u8, y: u8, sprite_byte: u8) -> Result<(), EmulationError> {
+        let mut sprite_byte = sprite_byte;
+        for b in 0..8 {
+            // Coordinates on the x axis.
+            let x_pos = x + b;
+
+            // Get the current value of the pixel.
+            let old_pixel = self
+                .screen
+                .get_pixel(x_pos, y)
+                .ok_or(EmulationError::ScreenError)?;
+
+            // Compute the new value.
+            let val = (sprite_byte & 0x80) != 0;
+            let new_pixel = old_pixel ^ val as u8;
+
+            // If we turned the pixel off set `VF`.
+            if old_pixel == 1 && new_pixel == 0 {
+                self.register_state.flags = 1;
+            }
+
+            // Write it.
+            self.screen
+                .set_pixel(x_pos, y, new_pixel)
+                .ok_or(EmulationError::ScreenError)?;
+
+            // Advance to the next pixel.
+            sprite_byte <<= 1;
+        }
+
+        Ok(())
+    }
+
     /// Pushes a value onto the stack.
     ///
     /// # Arguments
@@ -920,7 +1007,7 @@ mod tests {
 
     impl Screen for TestScreen {
         fn clear(&mut self) {}
-        fn get_pixel(&self, _x: u8, _y: u8) -> Option<u8> {
+        fn get_pixel(&mut self, _x: u8, _y: u8) -> Option<u8> {
             Some(0)
         }
         fn set_pixel(&mut self, _x: u8, _y: u8, _pixel: u8) -> Option<()> {
@@ -1554,7 +1641,6 @@ mod tests {
     }
 
     // TODO: test RND
-    // TODO: test DRW
     // TODO: test SKP
     // TODO: test SKNP
 
@@ -1979,5 +2065,279 @@ mod tests {
         assert_eq!(emu.register_state.gprs[0], value);
 
         assert_eq!(memory.expected_reads.len(), 0);
+    }
+
+    #[derive(Debug, Default)]
+    struct MockScreenExpectation<T> {
+        x: Option<u8>,
+        y: Option<u8>,
+        result: Option<T>,
+    }
+
+    const MOCK_SCREEN_X: usize = 4;
+    const MOCK_SCREEN_Y: usize = 5;
+
+    #[derive(Debug)]
+    struct MockScreen {
+        // `screen[x][y]` is the pixel at `(x, y)`.
+        screen: [u8; MOCK_SCREEN_X * MOCK_SCREEN_Y],
+        // If `Some`, `get_pixel` calls will fail after this many calls.
+        success_get_count: Option<u32>,
+        // If `Some`, `set_pixel` calls will fail after this many calls.
+        success_set_count: Option<u32>,
+    }
+
+    impl MockScreen {
+        fn new() -> Self {
+            MockScreen {
+                screen: [0; MOCK_SCREEN_X * MOCK_SCREEN_Y],
+                success_get_count: None,
+                success_set_count: None,
+            }
+        }
+
+        fn with_screen(screen: &[u8; MOCK_SCREEN_X * MOCK_SCREEN_Y]) -> Self {
+            MockScreen {
+                screen: *screen,
+                success_get_count: None,
+                success_set_count: None,
+            }
+        }
+    }
+
+    fn handle_wraparound(x: u8, y: u8) -> (usize, usize) {
+        (x as usize % MOCK_SCREEN_X, y as usize % MOCK_SCREEN_Y)
+    }
+
+    impl Screen for MockScreen {
+        fn clear(&mut self) {
+            unreachable!();
+        }
+
+        fn get_pixel(&mut self, x: u8, y: u8) -> Option<u8> {
+            if let Some(mut count) = self.success_get_count {
+                count -= 1;
+                if count == 0 {
+                    return None;
+                }
+                self.success_get_count = Some(count)
+            }
+
+            let (x, y) = handle_wraparound(x, y);
+            Some(self.screen[x + y * MOCK_SCREEN_X])
+        }
+
+        fn set_pixel(&mut self, x: u8, y: u8, value: u8) -> Option<()> {
+            if let Some(mut count) = self.success_set_count {
+                count -= 1;
+                if count == 0 {
+                    return None;
+                }
+                self.success_set_count = Some(count)
+            }
+
+            let (x, y) = handle_wraparound(x, y);
+            self.screen[x + y * MOCK_SCREEN_X] = value;
+            Some(())
+        }
+    }
+
+    #[test]
+    fn draw_sprite_bytes() {
+        let mut screen = MockScreen::new();
+        let mut keyboard = TestKeyboard {};
+        let mut memory = TestMemory {};
+
+        let mut emu = InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
+
+        emu.draw_sprite_byte(0, 0, 0xF0).unwrap();
+        emu.draw_sprite_byte(0, 1, 0x90).unwrap();
+        emu.draw_sprite_byte(0, 2, 0x90).unwrap();
+        emu.draw_sprite_byte(0, 3, 0x90).unwrap();
+        emu.draw_sprite_byte(0, 4, 0xF0).unwrap();
+
+        // `VF` should not be modified.
+        assert_eq!(emu.register_state.flags, 0);
+
+        // This should end up like:
+        // 1111
+        // 1001
+        // 1001
+        // 1001
+        // 1111
+        let expected = [1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 1];
+
+        assert!(
+            expected.len() <= screen.screen.len(),
+            "Make sure that MOCK_SCREEN_X and MOCK_SCREEN_Y are large enough!"
+        );
+        for i in 0..expected.len() {
+            assert_eq!(expected[i], screen.screen[i]);
+        }
+    }
+
+    #[test]
+    fn draw_sprite_bytes_with_vf() {
+        let mut screen = MockScreen::new();
+        let mut keyboard = TestKeyboard {};
+        let mut memory = TestMemory {};
+
+        // This should give as a conflict.
+        screen.screen[1] = 1;
+
+        let mut emu = InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
+
+        emu.draw_sprite_byte(0, 0, 0xF0).unwrap();
+        emu.draw_sprite_byte(0, 1, 0x90).unwrap();
+        emu.draw_sprite_byte(0, 2, 0x90).unwrap();
+        emu.draw_sprite_byte(0, 3, 0x90).unwrap();
+        emu.draw_sprite_byte(0, 4, 0xF0).unwrap();
+
+        // `VF` should be set.
+        assert_eq!(emu.register_state.flags, 1);
+
+        // This should end up like:
+        // 1011
+        // 1001
+        // 1001
+        // 1001
+        // 1111
+        let expected = [1, 0, 1, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 1];
+
+        assert!(
+            expected.len() <= screen.screen.len(),
+            "Make sure that MOCK_SCREEN_X and MOCK_SCREEN_Y are large enough!"
+        );
+        for i in 0..expected.len() {
+            assert_eq!(expected[i], screen.screen[i]);
+        }
+    }
+
+    #[test]
+    fn draw_sprite_bytes_fails_on_get() {
+        let mut screen = MockScreen::new();
+        let mut keyboard = TestKeyboard {};
+        let mut memory = TestMemory {};
+
+        screen.success_get_count = Some(9);
+
+        let mut emu = InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
+
+        emu.draw_sprite_byte(0, 0, 0x1).unwrap();
+        assert_eq!(
+            emu.draw_sprite_byte(0, 1, 0x90).unwrap_err(),
+            EmulationError::ScreenError
+        );
+    }
+
+    #[test]
+    fn draw_sprite_bytes_fails_on_set() {
+        let mut screen = MockScreen::new();
+        let mut keyboard = TestKeyboard {};
+        let mut memory = TestMemory {};
+
+        screen.success_set_count = Some(9);
+
+        let mut emu = InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
+
+        emu.draw_sprite_byte(0, 0, 0x1).unwrap();
+        assert_eq!(
+            emu.draw_sprite_byte(0, 1, 0x90).unwrap_err(),
+            EmulationError::ScreenError
+        );
+    }
+
+    #[test]
+    fn draw_sprite() {
+        let mut screen = MockScreen::new();
+        let mut keyboard = TestKeyboard {};
+        let mut memory = MockMemory::default();
+
+        let address = 0x200 as u16;
+
+        memory.expected_reads.push(MockMemoryReadExpectation {
+            address: Some(address),
+            result: Some(0xF0),
+        });
+        memory.expected_reads.push(MockMemoryReadExpectation {
+            address: Some(address + 1),
+            result: Some(0x90),
+        });
+
+        let mut emu = InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
+
+        emu.register_state.address_reg = address;
+
+        emu.draw_sprite(0, 0, 2).unwrap();
+
+        // `VF` should not be modified.
+        assert_eq!(emu.register_state.flags, 0);
+
+        // This should end up like:
+        // 1111
+        // 1001
+        let expected = [1, 1, 1, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+        assert!(
+            expected.len() <= screen.screen.len(),
+            "Make sure that MOCK_SCREEN_X and MOCK_SCREEN_Y are large enough!"
+        );
+        for i in 0..expected.len() {
+            assert_eq!(expected[i], screen.screen[i]);
+        }
+    }
+
+    #[test]
+    fn emulate_drw() {
+        let mut screen = MockScreen::new();
+        let mut keyboard = TestKeyboard {};
+        let mut memory = MockMemory::default();
+
+        let address = 0x200 as u16;
+
+        memory.expected_reads.push(MockMemoryReadExpectation {
+            address: Some(address),
+            result: Some(0xF0),
+        });
+        memory.expected_reads.push(MockMemoryReadExpectation {
+            address: Some(address + 1),
+            result: Some(0x90),
+        });
+
+        let mut emu = InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
+
+        emu.register_state.address_reg = address;
+        emu.register_state.gprs[0] = 0;
+        emu.register_state.gprs[1] = 1;
+
+        assert_eq!(
+            emu.emulate_internal(Instruction::Drw((
+                Operand::Gpr(0),
+                Operand::Gpr(1),
+                Operand::Nibble(2)
+            )))
+            .unwrap(),
+            true
+        );
+
+        // `VF` should not be modified.
+        assert_eq!(emu.register_state.flags, 0);
+
+        // This should end up like:
+        // 0000
+        // 1111
+        // 1001
+        // 0000
+        // 0000
+        let expected = [0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0];
+
+        assert!(
+            expected.len() <= screen.screen.len(),
+            "Make sure that MOCK_SCREEN_X and MOCK_SCREEN_Y are large enough!"
+        );
+
+        for i in 0..expected.len() {
+            assert_eq!(expected[i], screen.screen[i]);
+        }
     }
 }
