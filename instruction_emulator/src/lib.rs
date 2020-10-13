@@ -395,6 +395,22 @@ impl<'a> InstructionEmulator<'a> {
                     // Compute the address of the sprite and store it in the `I` register.
                     self.register_state.address_reg =
                         Self::DEFAULT_FONT_BASE_ADDRESS + index * Self::DEFAULT_FONT_SPRITE_SIZE;
+                } else if let Operand::Bcd = op1 {
+                    // Special case for LD B, Vx.
+                    // Store the digits of `Vx` in memory at `I`, `I + 1`, `I + 2`.
+                    let value = self.get_operand_value(&op2) as u8;
+
+                    let base_address = self.register_state.address_reg;
+
+                    self.memory
+                        .write(base_address, value / 100)
+                        .ok_or(EmulationError::MemoryWriteError(base_address))?;
+                    self.memory
+                        .write(base_address + 1, value % 100 / 10)
+                        .ok_or(EmulationError::MemoryWriteError(base_address + 1))?;
+                    self.memory
+                        .write(base_address + 2, value % 100 % 10)
+                        .ok_or(EmulationError::MemoryWriteError(base_address + 2))?;
                 } else {
                     // All the other cases.
                     // Set the first operand to the value of the second operand.
@@ -1401,8 +1417,6 @@ mod tests {
             true
         );
         assert_eq!(emu.register_state.sound_timer, 14);
-
-        // TODO: Test LD B, Vx
     }
 
     #[test]
@@ -2418,5 +2432,45 @@ mod tests {
             InstructionEmulator::DEFAULT_FONT_BASE_ADDRESS
                 + index as u16 * InstructionEmulator::DEFAULT_FONT_SPRITE_SIZE
         );
+    }
+
+    #[test]
+    fn emulate_ld_b_vx() {
+        let mut screen = TestScreen {};
+        let mut keyboard = TestKeyboard {};
+        let mut memory = MockMemory::default();
+
+        let address = 0x300;
+
+        memory.expected_writes.push(MockMemoryWriteExpectation {
+            address: Some(address),
+            value: Some(1),
+            result: Some(()),
+        });
+
+        memory.expected_writes.push(MockMemoryWriteExpectation {
+            address: Some(address + 1),
+            value: Some(2),
+            result: Some(()),
+        });
+
+        memory.expected_writes.push(MockMemoryWriteExpectation {
+            address: Some(address + 2),
+            value: Some(3),
+            result: Some(()),
+        });
+
+        let mut emu = InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
+
+        emu.register_state.address_reg = address;
+        emu.register_state.gprs[3] = 123;
+
+        assert_eq!(
+            emu.emulate_internal(Instruction::Ld((Operand::Bcd, Operand::Gpr(3))))
+                .unwrap(),
+            true
+        );
+
+        assert_eq!(memory.expected_writes.len(), 0);
     }
 }
