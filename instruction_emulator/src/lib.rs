@@ -187,6 +187,11 @@ pub struct InstructionEmulator<'a> {
 }
 
 impl<'a> InstructionEmulator<'a> {
+    /// The size of a font sprite.
+    const DEFAULT_FONT_SPRITE_SIZE: u16 = 5;
+    /// The base address at which the default font sprites are loaded.
+    const DEFAULT_FONT_BASE_ADDRESS: u16 = 0;
+
     /// Creates a new `InstructionEmulator`.
     ///
     /// The initial registers are all 0.
@@ -383,6 +388,13 @@ impl<'a> InstructionEmulator<'a> {
                     // Special case for LD Vx, K.
                     let k = self.keyboard.wait_for_keypress() as u16;
                     self.set_operand_value(&op1, k)?;
+                } else if let Operand::Font = op1 {
+                    // Special case for LD F, Vx.
+                    let index = self.get_operand_value(&op2);
+
+                    // Compute the address of the sprite and store it in the `I` register.
+                    self.register_state.address_reg =
+                        Self::DEFAULT_FONT_BASE_ADDRESS + index * Self::DEFAULT_FONT_SPRITE_SIZE;
                 } else {
                     // All the other cases.
                     // Set the first operand to the value of the second operand.
@@ -1390,7 +1402,6 @@ mod tests {
         );
         assert_eq!(emu.register_state.sound_timer, 14);
 
-        // TODO: Test LD F, Vx
         // TODO: Test LD B, Vx
     }
 
@@ -2383,5 +2394,29 @@ mod tests {
             true
         );
         assert_eq!(emu.register_state.gprs[3], key);
+    }
+
+    #[test]
+    fn emulate_ld_f_vx() {
+        let mut screen = TestScreen {};
+        let mut keyboard = TestKeyboard {};
+        let mut memory = TestMemory {};
+
+        let mut emu = InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
+
+        let index = 5;
+        emu.register_state.address_reg = 0x200;
+        emu.register_state.gprs[3] = index;
+
+        assert_eq!(
+            emu.emulate_internal(Instruction::Ld((Operand::Font, Operand::Gpr(3))))
+                .unwrap(),
+            true
+        );
+        assert_eq!(
+            emu.register_state.address_reg,
+            InstructionEmulator::DEFAULT_FONT_BASE_ADDRESS
+                + index as u16 * InstructionEmulator::DEFAULT_FONT_SPRITE_SIZE
+        );
     }
 }
