@@ -40,7 +40,7 @@ pub trait Screen {
 /// Abstracts access to the keyboard.
 pub trait Keyboard {
     /// Waits until a key is pressend and returns the code of the key.
-    fn wait_for_keypress(&self) -> u8;
+    fn wait_for_keypress(&mut self) -> u8;
 }
 
 /// Abstracts access to memory.
@@ -377,8 +377,12 @@ impl<'a> InstructionEmulator<'a> {
                     // Special case for LD [I], Vx.
                     self.store_gprs_to_memory(op2)?;
                 } else if let Operand::Memory = op2 {
-                    // Special case for LD Vx, [I]
+                    // Special case for LD Vx, [I].
                     self.load_gprs_from_memory(op1)?;
+                } else if let Operand::Key = op2 {
+                    // Special case for LD Vx, K.
+                    let k = self.keyboard.wait_for_keypress() as u16;
+                    self.set_operand_value(&op1, k)?;
                 } else {
                     // All the other cases.
                     // Set the first operand to the value of the second operand.
@@ -1016,7 +1020,7 @@ mod tests {
     }
 
     impl Keyboard for TestKeyboard {
-        fn wait_for_keypress(&self) -> u8 {
+        fn wait_for_keypress(&mut self) -> u8 {
             0
         }
     }
@@ -1386,7 +1390,6 @@ mod tests {
         );
         assert_eq!(emu.register_state.sound_timer, 14);
 
-        // TODO: Test LD Vx, K
         // TODO: Test LD F, Vx
         // TODO: Test LD B, Vx
     }
@@ -2339,5 +2342,46 @@ mod tests {
         for i in 0..expected.len() {
             assert_eq!(expected[i], screen.screen[i]);
         }
+    }
+
+    #[derive(Debug)]
+    struct MockKeyboard {
+        next_keys: Vec<u8>,
+    }
+
+    impl Default for MockKeyboard {
+        fn default() -> Self {
+            MockKeyboard {
+                next_keys: Vec::new(),
+            }
+        }
+    }
+
+    impl Keyboard for MockKeyboard {
+        fn wait_for_keypress(&mut self) -> u8 {
+            // This will panic if we don't expect a call.
+            self.next_keys.remove(0)
+        }
+    }
+
+    #[test]
+    fn emulate_ld_vx_k() {
+        let mut screen = TestScreen {};
+        let mut keyboard = MockKeyboard::default();
+        let mut memory = TestMemory {};
+
+        let key = 5;
+        keyboard.next_keys.push(key);
+
+        let mut emu = InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
+
+        emu.register_state.gprs[3] = 0;
+
+        assert_eq!(
+            emu.emulate_internal(Instruction::Ld((Operand::Gpr(3), Operand::Key)))
+                .unwrap(),
+            true
+        );
+        assert_eq!(emu.register_state.gprs[3], key);
     }
 }
