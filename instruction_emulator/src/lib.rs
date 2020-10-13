@@ -1669,8 +1669,6 @@ mod tests {
     }
 
     // TODO: test RND
-    // TODO: test SKP
-    // TODO: test SKNP
 
     #[derive(Debug, Default)]
     struct MockMemoryWriteExpectation {
@@ -2472,5 +2470,71 @@ mod tests {
         );
 
         assert_eq!(memory.expected_writes.len(), 0);
+    }
+
+    #[test]
+    fn emulate_skp() {
+        let mut screen = TestScreen {};
+        let mut keyboard = MockKeyboard::default();
+        let mut memory = TestMemory {};
+
+        let skip = 5;
+        let not_skip = 7;
+        keyboard.next_keys.push(skip);
+        keyboard.next_keys.push(not_skip);
+
+        let mut emu = InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
+
+        emu.register_state.pc = 0x250;
+        emu.register_state.gprs[6] = skip;
+
+        assert_eq!(
+            emu.emulate_internal(Instruction::Skp(Operand::Gpr(6)))
+                .unwrap(),
+            true
+        );
+        assert_eq!(emu.register_state.pc, 0x252);
+
+        emu.register_state.pc = 0x350;
+        emu.register_state.gprs[6] = skip;
+
+        assert_eq!(
+            emu.emulate_internal(Instruction::Skp(Operand::Gpr(6)))
+                .unwrap(),
+            true
+        );
+        assert_eq!(emu.register_state.pc, 0x350);
+    }
+
+    #[test]
+    fn emulate_sknp() {
+        let mut screen = TestScreen {};
+        let mut keyboard = MockKeyboard::default();
+        let mut memory = TestMemory {};
+
+        keyboard.next_keys.push(5);
+        keyboard.next_keys.push(7);
+
+        let mut emu = InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
+
+        emu.register_state.pc = 0x250;
+        emu.register_state.gprs[6] = 5;
+
+        assert_eq!(
+            emu.emulate_internal(Instruction::Sknp(Operand::Gpr(6)))
+                .unwrap(),
+            true
+        );
+        assert_eq!(emu.register_state.pc, 0x250);
+
+        emu.register_state.pc = 0x350;
+        emu.register_state.gprs[6] = 5;
+
+        assert_eq!(
+            emu.emulate_internal(Instruction::Sknp(Operand::Gpr(6)))
+                .unwrap(),
+            true
+        );
+        assert_eq!(emu.register_state.pc, 0x352);
     }
 }
