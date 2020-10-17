@@ -5,7 +5,7 @@ use std::error::Error;
 use std::fmt;
 
 /// Abstracts access to the display.
-pub trait Screen {
+pub trait EmuScreen {
     /// Clears the screen.
     fn clear(&mut self);
 
@@ -38,13 +38,13 @@ pub trait Screen {
 }
 
 /// Abstracts access to the keyboard.
-pub trait Keyboard {
+pub trait EmuKeyboard {
     /// Waits until a key is pressend and returns the code of the key.
     fn wait_for_keypress(&mut self) -> u8;
 }
 
 /// Abstracts access to memory.
-pub trait Memory {
+pub trait EmuMemory {
     /// Reads a byte from memory.
     ///
     /// # Arguments
@@ -191,13 +191,13 @@ pub struct InstructionEmulator<'a> {
     stack: [u16; 16],
 
     /// Used to draw to the screen.
-    screen: &'a mut dyn Screen,
+    screen: &'a mut dyn EmuScreen,
 
     /// Used to get key press events.
-    keyboard: &'a mut dyn Keyboard,
+    keyboard: &'a mut dyn EmuKeyboard,
 
     /// Used to access the memory.
-    memory: &'a mut dyn Memory,
+    memory: &'a mut dyn EmuMemory,
 }
 
 impl<'a> InstructionEmulator<'a> {
@@ -212,13 +212,13 @@ impl<'a> InstructionEmulator<'a> {
     ///
     /// # Arguments
     ///
-    /// * `screen` - A structure that implements the `Screen` trait. Used to draw to the screen.
-    /// * `keyboard` - A structure that implements the `Keyboard` trait. Used to get key press events.
-    /// * `memory` - A structure that implements the `Memory` trait. Used to access memory.
+    /// * `screen` - A structure that implements the `EmuScreen` trait. Used to draw to the screen.
+    /// * `keyboard` - A structure that implements the `EmuKeyboard` trait. Used to get key press events.
+    /// * `memory` - A structure that implements the `EmuMemory` trait. Used to access memory.
     pub fn new(
-        screen: &'a mut dyn Screen,
-        keyboard: &'a mut dyn Keyboard,
-        memory: &'a mut dyn Memory,
+        screen: &'a mut dyn EmuScreen,
+        keyboard: &'a mut dyn EmuKeyboard,
+        memory: &'a mut dyn EmuMemory,
     ) -> Self {
         InstructionEmulator::with_initial_state(Default::default(), screen, keyboard, memory)
     }
@@ -228,14 +228,14 @@ impl<'a> InstructionEmulator<'a> {
     /// # Arguments
     ///
     /// * `register_state` - The initial `RegisterState` to be used.
-    /// * `screen` - A structure that implements the `Screen` trait. Used to draw to the screen.
-    /// * `keyboard` - A structure that implements the `Keyboard` trait. Used to get key press events.
-    /// * `memory` - A structure that implements the `Memory` trait. Used to access memory.
+    /// * `screen` - A structure that implements the `EmuScreen` trait. Used to draw to the screen.
+    /// * `keyboard` - A structure that implements the `EmuKeyboard` trait. Used to get key press events.
+    /// * `memory` - A structure that implements the `EmuMemory` trait. Used to access memory.
     pub fn with_initial_state(
         register_state: RegisterState,
-        screen: &'a mut dyn Screen,
-        keyboard: &'a mut dyn Keyboard,
-        memory: &'a mut dyn Memory,
+        screen: &'a mut dyn EmuScreen,
+        keyboard: &'a mut dyn EmuKeyboard,
+        memory: &'a mut dyn EmuMemory,
     ) -> Self {
         InstructionEmulator {
             register_state,
@@ -1076,7 +1076,7 @@ mod tests {
     struct TestKeyboard;
     struct TestMemory;
 
-    impl Screen for TestScreen {
+    impl EmuScreen for TestScreen {
         fn clear(&mut self) {}
         fn get_pixel(&mut self, _x: u8, _y: u8) -> Option<u8> {
             Some(0)
@@ -1086,13 +1086,13 @@ mod tests {
         }
     }
 
-    impl Keyboard for TestKeyboard {
+    impl EmuKeyboard for TestKeyboard {
         fn wait_for_keypress(&mut self) -> u8 {
             0
         }
     }
 
-    impl Memory for TestMemory {
+    impl EmuMemory for TestMemory {
         fn read(&mut self, _address: u16) -> Option<u8> {
             Some(0)
         }
@@ -1733,7 +1733,7 @@ mod tests {
         expected_reads: Vec<MockMemoryReadExpectation>,
     }
 
-    impl Memory for MockMemory {
+    impl EmuMemory for MockMemory {
         fn read(&mut self, address: u16) -> Option<u8> {
             // This will panic if we don't expect a read.
             let expectation = self.expected_reads.remove(0);
@@ -2160,21 +2160,13 @@ mod tests {
                 success_set_count: None,
             }
         }
-
-        fn with_screen(screen: &[u8; MOCK_SCREEN_X * MOCK_SCREEN_Y]) -> Self {
-            MockScreen {
-                screen: *screen,
-                success_get_count: None,
-                success_set_count: None,
-            }
-        }
     }
 
     fn handle_wraparound(x: u8, y: u8) -> (usize, usize) {
         (x as usize % MOCK_SCREEN_X, y as usize % MOCK_SCREEN_Y)
     }
 
-    impl Screen for MockScreen {
+    impl EmuScreen for MockScreen {
         fn clear(&mut self) {
             unreachable!();
         }
@@ -2419,7 +2411,7 @@ mod tests {
         }
     }
 
-    impl Keyboard for MockKeyboard {
+    impl EmuKeyboard for MockKeyboard {
         fn wait_for_keypress(&mut self) -> u8 {
             // This will panic if we don't expect a call.
             self.next_keys.remove(0)
