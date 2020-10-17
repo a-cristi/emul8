@@ -1,10 +1,11 @@
+use instruction_emulator::EmuKey;
 use std::sync::Arc;
 use std::sync::Mutex;
 
 /// The underlaying keyboard state.
 pub struct KeyboardState {
     // Holds the last pressed key until it is replaced or consumed. If no key was pressed it is `None`.
-    key: Option<u8>,
+    pub key: Option<EmuKey>,
 }
 
 impl Default for KeyboardState {
@@ -17,23 +18,21 @@ impl Default for KeyboardState {
 /// Describes the CHIP8 screen as used by `instruction_emulator`.
 pub struct Keyboard {
     /// The keyboard state. This is shared between the emulation layer and the user interaction layer.
-    data: Arc<Mutex<KeyboardState>>,
+    state: Arc<Mutex<KeyboardState>>,
 }
 
-impl Default for Keyboard {
-    fn default() -> Self {
-        Keyboard {
-            data: Arc::new(Mutex::new(KeyboardState::default())),
-        }
+impl Keyboard {
+    pub fn new(state: Arc<Mutex<KeyboardState>>) -> Self {
+        Self { state }
     }
 }
 
 impl instruction_emulator::EmuKeyboard for Keyboard {
-    fn wait_for_keypress(&mut self) -> u8 {
+    fn wait_for_keypress(&mut self) -> EmuKey {
         loop {
             {
                 // Get access to the keyboard.
-                let mut kbd = self.data.lock().unwrap();
+                let mut kbd = self.state.lock().unwrap();
                 if let Some(key) = kbd.key {
                     // If we have a key return it and store `None` in its place.
                     kbd.key = None;

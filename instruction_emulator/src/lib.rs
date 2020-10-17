@@ -37,10 +37,24 @@ pub trait EmuScreen {
     fn set_pixel(&mut self, x: u8, y: u8, value: u8) -> Option<()>;
 }
 
+/// Describes one of the keys of the CHIP8 keyboard.
+#[derive(Clone, Copy)]
+pub struct EmuKey(u8);
+
+impl EmuKey {
+    pub fn new(key: u8) -> Self {
+        assert!(
+            key <= 0xf,
+            "Key values must be between 0 and 15 (inclusive)!"
+        );
+        Self(key)
+    }
+}
+
 /// Abstracts access to the keyboard.
 pub trait EmuKeyboard {
     /// Waits until a key is pressend and returns the code of the key.
-    fn wait_for_keypress(&mut self) -> u8;
+    fn wait_for_keypress(&mut self) -> EmuKey;
 }
 
 /// Abstracts access to memory.
@@ -306,6 +320,17 @@ impl<'a> InstructionEmulator<'a> {
         self.register_state.clone()
     }
 
+    // Decrements the timers if needed.
+    pub fn decrement_timers(&mut self) {
+        if self.register_state.delay_timer > 0 {
+            self.register_state.delay_timer -= 1;
+        }
+
+        if self.register_state.sound_timer > 0 {
+            self.register_state.sound_timer -= 1;
+        }
+    }
+
     /// Emulates an already decoded instruction.
     /// This function will not advance the program counter past the current instruction. If `PC` needs to be advanced this function returns `Ok(true)`, otherwise it returns `Ok(false)`.
     ///
@@ -425,7 +450,7 @@ impl<'a> InstructionEmulator<'a> {
                     self.load_gprs_from_memory(op1)?;
                 } else if let Operand::Key = op2 {
                     // Special case for LD Vx, K.
-                    let k = self.keyboard.wait_for_keypress() as u16;
+                    let k = self.keyboard.wait_for_keypress().0 as u16;
                     self.set_operand_value(&op1, k)?;
                 } else if let Operand::Font = op1 {
                     // Special case for LD F, Vx.
@@ -623,7 +648,7 @@ impl<'a> InstructionEmulator<'a> {
                 let expected_key = self.get_operand_value(&op) as u8;
 
                 // Wait for a key to be pressed.
-                let key = self.keyboard.wait_for_keypress();
+                let key = self.keyboard.wait_for_keypress().0;
 
                 if expected_key == key {
                     // Skip the next instruction.
@@ -639,7 +664,7 @@ impl<'a> InstructionEmulator<'a> {
                 let expected_key = self.get_operand_value(&op) as u8;
 
                 // Wait for a key to be pressed.
-                let key = self.keyboard.wait_for_keypress();
+                let key = self.keyboard.wait_for_keypress().0;
 
                 if expected_key != key {
                     // Skip the next instruction.
@@ -1087,8 +1112,8 @@ mod tests {
     }
 
     impl EmuKeyboard for TestKeyboard {
-        fn wait_for_keypress(&mut self) -> u8 {
-            0
+        fn wait_for_keypress(&mut self) -> EmuKey {
+            EmuKey::new(0)
         }
     }
 
@@ -2412,9 +2437,9 @@ mod tests {
     }
 
     impl EmuKeyboard for MockKeyboard {
-        fn wait_for_keypress(&mut self) -> u8 {
+        fn wait_for_keypress(&mut self) -> EmuKey {
             // This will panic if we don't expect a call.
-            self.next_keys.remove(0)
+            EmuKey::new(self.next_keys.remove(0))
         }
     }
 
