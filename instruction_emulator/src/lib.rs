@@ -72,7 +72,7 @@ pub trait Memory {
 }
 
 /// The register state.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RegisterState {
     /// The general purpose registers, `V0` through `Ve`.
     gprs: [u8; 15],
@@ -279,6 +279,31 @@ impl<'a> InstructionEmulator<'a> {
         }
 
         Ok(())
+    }
+
+    /// Fetches the next instruction from memory and emulates it.
+    ///
+    /// # Errors
+    ///
+    /// Any errors encountered during emulation are reported by returning a `Result` variant that wraps `EmulationError`.
+    pub fn emulate_next(&mut self) -> Result<(), EmulationError> {
+        // Fetch the instruction at `PC`. The instruction is always 2 bytes long.
+        let pc = self.register_state.pc;
+        let code: [u8; 2] = [
+            self.memory
+                .read(pc)
+                .ok_or(EmulationError::MemoryReadError(pc))?,
+            self.memory
+                .read(pc + 1)
+                .ok_or(EmulationError::MemoryReadError(pc + 1))?,
+        ];
+        // Emulate. This will advance `PC` as needed.
+        self.emulate(&code)
+    }
+
+    /// Returns a copy of the current register state.
+    pub fn get_register_state(&self) -> RegisterState {
+        self.register_state.clone()
     }
 
     /// Emulates an already decoded instruction.
