@@ -72,7 +72,7 @@ pub trait Memory {
 }
 
 /// The register state.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct RegisterState {
     /// The general purpose registers, `V0` through `Ve`.
     gprs: [u8; 15],
@@ -110,6 +110,20 @@ impl fmt::Display for RegisterState {
             "DT = {:#04x} ST = {:#04x}\n",
             self.delay_timer, self.sound_timer
         )
+    }
+}
+
+impl Default for RegisterState {
+    fn default() -> Self {
+        RegisterState {
+            gprs: [0; 15],
+            flags: 0,
+            address_reg: 0,
+            delay_timer: 0,
+            sound_timer: 0,
+            pc: 0x200,
+            sp: 0,
+        }
     }
 }
 
