@@ -7,3 +7,11 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+clap = "2.33.3"
+instruction_emulator = { path = "instruction_emulator" }
+decoder = { path = "decoder" }
+
+[dependencies.cursive]
+version = "0.15.0"
+default-features = false
+features = ["crossterm-backend"]
