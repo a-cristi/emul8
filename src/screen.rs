@@ -26,7 +26,7 @@ pub struct ScreenState {
     /// ```
     ///
     pub buffer: Vec<u8>,
-    /// Set to `true` after `buffer` was written.
+    /// Set to `true` if at least a pixel changed.
     pub was_updated: bool,
 }
 
@@ -67,8 +67,8 @@ impl ScreenState {
     fn set_pixel(&mut self, x: u8, y: u8, value: u8) -> Option<()> {
         let (x, y) = self.handle_wraparound(x, y);
         let index = self.coordinates_to_index((x, y));
+        self.was_updated = self.was_updated || self.buffer[index] != value;
         self.buffer[index] = value;
-        self.was_updated = true;
         Some(())
     }
 }
@@ -214,7 +214,7 @@ mod tests {
             for row in 0..height {
                 let value = (col + row * width) as u8;
                 screen.set_pixel(col as u8, row as u8, value).unwrap();
-                assert_eq!(screen.was_updated, true);
+                assert_eq!(screen.was_updated, value != 0);
             }
         }
 
