@@ -330,8 +330,8 @@ impl<'a> InstructionEmulator<'a> {
                 }
             }
             Instruction::Call(op) => {
-                // Save the current program counter on the stack.
-                self.push_stack(self.register_state.pc)?;
+                // Save the next program counter on the stack.
+                self.push_stack(self.register_state.pc + 2)?;
 
                 // Set the program counter.
                 self.register_state.pc = self.get_operand_value(&op);
@@ -1279,7 +1279,7 @@ mod tests {
         );
         assert_eq!(emu.register_state.pc, 0x200);
         assert_eq!(emu.register_state.sp, 1);
-        assert_eq!(emu.stack[0], 0x100);
+        assert_eq!(emu.stack[0], 0x102);
     }
 
     #[test]
