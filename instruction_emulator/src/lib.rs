@@ -212,6 +212,12 @@ pub struct InstructionEmulator<'a> {
 
     /// Used to access the memory.
     memory: &'a mut dyn EmuMemory,
+
+    /// Used to control behavior for the `SYS` instruction.
+    /// If `true`, the `SYS` instruction is ignored and `PC` is incremented as usual.
+    /// If `false`, when a `SYS` instruction is encountered the emulator will return `EmulationError::InstructionNotSupported`.
+    /// By default, this is `true`.
+    ignore_sys: bool,
 }
 
 impl<'a> InstructionEmulator<'a> {
@@ -257,6 +263,7 @@ impl<'a> InstructionEmulator<'a> {
             screen,
             keyboard,
             memory,
+            ignore_sys: true,
         }
     }
 
@@ -345,7 +352,13 @@ impl<'a> InstructionEmulator<'a> {
         // See http://www.cs.columbia.edu/~sedwards/classes/2016/4840-spring/reports/Chip8.pdf
 
         match instruction {
-            Instruction::Sys(_) => Err(EmulationError::InstructionNotSupported(instruction)),
+            Instruction::Sys(_) => {
+                if self.ignore_sys {
+                    Ok(true)
+                } else {
+                    Err(EmulationError::InstructionNotSupported(instruction))
+                }
+            }
             Instruction::Cls => {
                 self.screen.clear();
                 Ok(true)
@@ -1274,10 +1287,18 @@ mod tests {
 
         let mut emu = InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
 
+        emu.ignore_sys = false;
         assert_eq!(
             emu.emulate_internal(Instruction::Sys(Operand::Address(0)))
                 .unwrap_err(),
             EmulationError::InstructionNotSupported(Instruction::Sys(Operand::Address(0)))
+        );
+
+        emu.ignore_sys = true;
+        assert_eq!(
+            emu.emulate_internal(Instruction::Sys(Operand::Address(0)))
+                .unwrap(),
+            true
         );
     }
 
