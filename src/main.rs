@@ -2,20 +2,17 @@ use anyhow;
 use clap::{App, Arg};
 use cursive;
 use cursive::event::{Event, EventResult};
-use cursive::theme::BaseColor;
-use cursive::theme::Color;
-use cursive::theme::ColorStyle;
+use cursive::theme::{BaseColor, Color, ColorStyle};
 use cursive::views::Canvas;
 use instruction_emulator as emu;
 use instruction_emulator::EmuKey;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 mod fonts;
 mod keyboard;
@@ -100,7 +97,10 @@ fn main() -> anyhow::Result<()> {
             thread::yield_now();
         }
 
+        let expected_duration = Duration::from_millis(2);
         loop {
+            let start = Instant::now();
+
             // Should we stop?
             // TODO: can I relax this and use `Ordering::Relaxed`?
             if should_stop_emu.load(Ordering::SeqCst) {
@@ -119,9 +119,13 @@ fn main() -> anyhow::Result<()> {
                 }
             }
 
-            // Sleep a little.
-            // TODO: keep a ~stady FPS
-            std::thread::sleep(std::time::Duration::from_millis(2));
+            // Figure out how much time this took.
+            let duration = start.elapsed();
+
+            // Try to make each instruction take up to ~2 milis.            
+            if duration < expected_duration {
+                std::thread::sleep(Duration::from_millis(2) - duration);
+            }
         }
     });
 
