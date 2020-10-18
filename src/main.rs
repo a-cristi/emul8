@@ -78,7 +78,8 @@ fn main() -> anyhow::Result<()> {
     let ready_emu = ready.clone();
     let should_stop_emu = should_stop.clone();
 
-    let emu_thread = std::thread::spawn(move || -> anyhow::Result<()> {
+    let emu_thread = thread::Builder::new().name("emulator".to_string()).spawn(move || -> anyhow::Result<()> {
+
         // Create the scrren, keyboard and memnory that will be used by the emulator.
         let mut screen = screen::Screen::new(screen_state_emu);
         let mut keyboard = keyboard::Keyboard::new(keyboard_state_emu);
@@ -127,9 +128,9 @@ fn main() -> anyhow::Result<()> {
                 std::thread::sleep(Duration::from_millis(2) - duration);
             }
         }
-    });
+    })?;
 
-    let ui_thread = std::thread::spawn(move || -> anyhow::Result<()> {
+    let ui_thread = thread::Builder::new().name("UI".to_string()).spawn(move || -> anyhow::Result<()> {
         let rs = RenderState {
             screen_state: screen_state.clone(),
             keyboard_state: keyboard_state.clone(),
@@ -229,7 +230,7 @@ fn main() -> anyhow::Result<()> {
 
             thread::sleep(std::time::Duration::from_millis(2));
         }
-    });
+    })?;
 
     // TODO: a better way of handling errors here?
     ui_thread.join().expect("Could not join the ui thread")?;
