@@ -48,17 +48,22 @@ fn main() -> anyhow::Result<()> {
                 .required(true),
         )
         .arg(
-            Arg::with_name("FILE")
+            Arg::with_name("trace")
+                .value_name("FILE")
                 .short("t")
                 .long("trace")
-                .help("Trace execution")
-                .takes_value(true)
-                .default_value("trace.log"),
+                .help("Trace emulation")
+                .takes_value(true),
         )
         .get_matches();
 
     // `input` is mandatory, so if we get here we can safely `unwrap` this.
     let in_path = Path::new(matches.value_of("input").unwrap());
+
+    let emulator_trace_file = match matches.value_of("trace") {
+        Some(file_path) => Some(File::create(file_path)?),
+        None => None,
+    };
 
     // Read the ROM.
     let code = get_code_from_file(in_path)?;
@@ -78,169 +83,179 @@ fn main() -> anyhow::Result<()> {
     let ready_emu = ready.clone();
     let should_stop_emu = should_stop.clone();
 
-    let emu_thread = thread::Builder::new().name("emulator".to_string()).spawn(move || -> anyhow::Result<()> {
+    let emu_thread = thread::Builder::new().name("emulator".to_string()).spawn(
+        move || -> anyhow::Result<()> {
+            // Create the scrren, keyboard and memnory that will be used by the emulator.
+            let mut screen = screen::Screen::new(screen_state_emu);
+            let mut keyboard = keyboard::Keyboard::new(keyboard_state_emu);
+            let mut memory = memory::Memory::default();
 
-        // Create the scrren, keyboard and memnory that will be used by the emulator.
-        let mut screen = screen::Screen::new(screen_state_emu);
-        let mut keyboard = keyboard::Keyboard::new(keyboard_state_emu);
-        let mut memory = memory::Memory::default();
+            // Load the program into memory.
+            memory.load_program(&code)?;
 
-        // Load the program into memory.
-        memory.load_program(&code)?;
+            // Load the fonts into memory.
+            memory.load_fonts(&fonts::get_fonts())?;
 
-        // Load the fonts into memory.
-        memory.load_fonts(&fonts::get_fonts())?;
+            // Create the emulator.
+            let mut emu = emu::InstructionEmulator::with_initial_state(
+                Default::default(),
+                &mut screen,
+                &mut keyboard,
+                &mut memory,
+                emulator_trace_file,
+            );
 
-        // Create the emulator.
-        let mut emu = emu::InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
-
-        // Check if the `ui_thread` signaled us to start.
-        while !ready_emu.load(Ordering::SeqCst) {
-            thread::yield_now();
-        }
-
-        let expected_duration = Duration::from_millis(2);
-        let mut timer_counter = 0;
-        loop {
-            let start = Instant::now();
-
-            // Should we stop?
-            // TODO: can I relax this and use `Ordering::Relaxed`?
-            if should_stop_emu.load(Ordering::SeqCst) {
-                return Ok(());
+            // Check if the `ui_thread` signaled us to start.
+            while !ready_emu.load(Ordering::SeqCst) {
+                thread::yield_now();
             }
 
-            // We execute ~500 instructions/s. The timers should be decremented at a rate of 60Hz, which means
-            // that this should be done once every ~8 instructions.
-            // TODO: should this be coupled to how many instructions we execute in one second? What happens
-            // if we wait for a key press? Should the timers decrement during that time?
-            if timer_counter > 0 {
-                timer_counter = 0;
-                emu.decrement_timers();
-            }
-            timer_counter += 1;
+            let expected_duration = Duration::from_millis(2);
+            let mut timer_counter = 0;
+            loop {
+                let start = Instant::now();
 
-            // Emulate the next instruction.
-            match emu.emulate_next() {
-                Ok(_) => (),
-                Err(e) => {
-                    // Signal the other threads that it is time to stop.
-                    should_stop_emu.store(true, Ordering::SeqCst);
-                    return Err(anyhow::anyhow!("Emulation error: {}", e));
+                // Should we stop?
+                // TODO: can I relax this and use `Ordering::Relaxed`?
+                if should_stop_emu.load(Ordering::SeqCst) {
+                    return Ok(());
+                }
+
+                // We execute ~500 instructions/s. The timers should be decremented at a rate of 60Hz, which means
+                // that this should be done once every ~8 instructions.
+                // TODO: should this be coupled to how many instructions we execute in one second? What happens
+                // if we wait for a key press? Should the timers decrement during that time?
+                if timer_counter > 0 {
+                    timer_counter = 0;
+                    emu.decrement_timers();
+                }
+                timer_counter += 1;
+
+                // Emulate the next instruction.
+                match emu.emulate_next() {
+                    Ok(_) => (),
+                    Err(e) => {
+                        // Signal the other threads that it is time to stop.
+                        should_stop_emu.store(true, Ordering::SeqCst);
+                        return Err(anyhow::anyhow!("Emulation error: {}", e));
+                    }
+                }
+
+                // Figure out how much time this took.
+                let duration = start.elapsed();
+
+                // Try to make each instruction take up to ~2 milis.
+                if duration < expected_duration {
+                    std::thread::sleep(Duration::from_millis(2) - duration);
                 }
             }
+        },
+    )?;
 
-            // Figure out how much time this took.
-            let duration = start.elapsed();
+    let ui_thread =
+        thread::Builder::new()
+            .name("UI".to_string())
+            .spawn(move || -> anyhow::Result<()> {
+                let rs = RenderState {
+                    screen_state: screen_state.clone(),
+                    keyboard_state: keyboard_state.clone(),
+                    screen_width: screen::DEFAULT_SCREEN_WIDTH,
+                    screen_height: screen::DEFAULT_SCREEN_HEIGHT,
+                };
 
-            // Try to make each instruction take up to ~2 milis.            
-            if duration < expected_duration {
-                std::thread::sleep(Duration::from_millis(2) - duration);
-            }
-        }
-    })?;
+                let mut siv = cursive::default();
 
-    let ui_thread = thread::Builder::new().name("UI".to_string()).spawn(move || -> anyhow::Result<()> {
-        let rs = RenderState {
-            screen_state: screen_state.clone(),
-            keyboard_state: keyboard_state.clone(),
-            screen_width: screen::DEFAULT_SCREEN_WIDTH,
-            screen_height: screen::DEFAULT_SCREEN_HEIGHT,
-        };
+                siv.add_global_callback('q', |s| s.quit());
 
-        let mut siv = cursive::default();
-
-        siv.add_global_callback('q', |s| s.quit());
-
-        siv.add_layer(
-            Canvas::new(rs)
-                .with_required_size(|rs: &mut RenderState, _| {
-                    (rs.screen_width, rs.screen_height).into()
-                })
-                .with_draw(|rs: &RenderState, printer| {
-                    let ss = rs.screen_state.lock().unwrap();
-                    for row in 0..ss.height {
-                        for col in 0..ss.width {
-                            let new = ss.buffer[col + row * ss.width];
-                            let set = new != 0;
-                            if set {
-                                printer.with_color(
-                                    ColorStyle::new(
-                                        Color::Dark(BaseColor::Red),
-                                        Color::Dark(BaseColor::Red),
-                                    ),
-                                    |printer| {
-                                        printer.print((col, row), " ");
-                                    },
-                                );
-                            } else {
-                                printer.with_color(
-                                    ColorStyle::new(
-                                        Color::Dark(BaseColor::Black),
-                                        Color::Dark(BaseColor::Black),
-                                    ),
-                                    |printer| {
-                                        printer.print((col, row), " ");
-                                    },
-                                );
+                siv.add_layer(
+                    Canvas::new(rs)
+                        .with_required_size(|rs: &mut RenderState, _| {
+                            (rs.screen_width, rs.screen_height).into()
+                        })
+                        .with_draw(|rs: &RenderState, printer| {
+                            let ss = rs.screen_state.lock().unwrap();
+                            for row in 0..ss.height {
+                                for col in 0..ss.width {
+                                    let new = ss.buffer[col + row * ss.width];
+                                    let set = new != 0;
+                                    if set {
+                                        printer.with_color(
+                                            ColorStyle::new(
+                                                Color::Dark(BaseColor::Red),
+                                                Color::Dark(BaseColor::Red),
+                                            ),
+                                            |printer| {
+                                                printer.print((col, row), " ");
+                                            },
+                                        );
+                                    } else {
+                                        printer.with_color(
+                                            ColorStyle::new(
+                                                Color::Dark(BaseColor::Black),
+                                                Color::Dark(BaseColor::Black),
+                                            ),
+                                            |printer| {
+                                                printer.print((col, row), " ");
+                                            },
+                                        );
+                                    }
+                                }
                             }
-                        }
-                    }
-                })
-                .with_on_event(|rs: &mut RenderState, event| match event {
-                    Event::Char(c) => {
-                        let digit = c.to_digit(16);
-                        if let Some(digit) = digit {
-                            if digit < 16 {
-                                let mut kbd = rs.keyboard_state.lock().unwrap();
-                                kbd.key = Some(EmuKey::new(digit as u8));
-                                return EventResult::Consumed(None);
+                        })
+                        .with_on_event(|rs: &mut RenderState, event| match event {
+                            Event::Char(c) => {
+                                let digit = c.to_digit(16);
+                                if let Some(digit) = digit {
+                                    if digit < 16 {
+                                        let mut kbd = rs.keyboard_state.lock().unwrap();
+                                        kbd.key = Some(EmuKey::new(digit as u8));
+                                        return EventResult::Consumed(None);
+                                    }
+                                }
+                                EventResult::Ignored
                             }
-                        }
-                        EventResult::Ignored
-                    }
-                    _ => EventResult::Ignored,
-                }),
-        );
+                            _ => EventResult::Ignored,
+                        }),
+                );
 
-        siv.refresh();
-
-        // Signal the `emu_thread` that emulation can now begin.
-        ready.store(true, Ordering::SeqCst);
-
-        loop {
-            siv.step();
-
-            let needs_refresh: bool;
-            {
-                // Get access to the screen state.
-                let mut scr_state = screen_state.lock().unwrap();
-
-                // If the screen was update we need a refresh.
-                needs_refresh = scr_state.was_updated;
-
-                // Reset the `was_updated` state.
-                scr_state.was_updated = false;
-            }
-
-            if needs_refresh {
                 siv.refresh();
-            }
 
-            if !siv.is_running() {
-                // Signal the other threads that is is time to stop.
-                should_stop.store(true, Ordering::SeqCst);
-                return Ok(());
-            }
+                // Signal the `emu_thread` that emulation can now begin.
+                ready.store(true, Ordering::SeqCst);
 
-            // Check if another thread asked us to stop.
-            if should_stop.load(Ordering::SeqCst) {
-                return Ok(());
-            }
+                loop {
+                    siv.step();
 
-            thread::sleep(std::time::Duration::from_millis(2));
-        }
-    })?;
+                    let needs_refresh: bool;
+                    {
+                        // Get access to the screen state.
+                        let mut scr_state = screen_state.lock().unwrap();
+
+                        // If the screen was update we need a refresh.
+                        needs_refresh = scr_state.was_updated;
+
+                        // Reset the `was_updated` state.
+                        scr_state.was_updated = false;
+                    }
+
+                    if needs_refresh {
+                        siv.refresh();
+                    }
+
+                    if !siv.is_running() {
+                        // Signal the other threads that is is time to stop.
+                        should_stop.store(true, Ordering::SeqCst);
+                        return Ok(());
+                    }
+
+                    // Check if another thread asked us to stop.
+                    if should_stop.load(Ordering::SeqCst) {
+                        return Ok(());
+                    }
+
+                    thread::sleep(std::time::Duration::from_millis(2));
+                }
+            })?;
 
     // TODO: a better way of handling errors here?
     ui_thread.join().expect("Could not join the ui thread")?;

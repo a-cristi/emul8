@@ -3,6 +3,8 @@
 use decoder::{decode, Instruction, Operand};
 use std::error::Error;
 use std::fmt;
+use std::fs::File;
+use std::io::prelude::*;
 
 /// Abstracts access to the display.
 pub trait EmuScreen {
@@ -218,6 +220,10 @@ pub struct InstructionEmulator<'a> {
     /// If `false`, when a `SYS` instruction is encountered the emulator will return `EmulationError::InstructionNotSupported`.
     /// By default, this is `true`.
     ignore_sys: bool,
+
+    /// Used to trace the emulation.
+    /// If `None`, no tracing is done.
+    trace_file: Option<File>,
 }
 
 impl<'a> InstructionEmulator<'a> {
@@ -240,7 +246,7 @@ impl<'a> InstructionEmulator<'a> {
         keyboard: &'a mut dyn EmuKeyboard,
         memory: &'a mut dyn EmuMemory,
     ) -> Self {
-        InstructionEmulator::with_initial_state(Default::default(), screen, keyboard, memory)
+        InstructionEmulator::with_initial_state(Default::default(), screen, keyboard, memory, None)
     }
 
     /// Creates a new `InstructionEmulator` with a given `RegisterState`.
@@ -251,11 +257,13 @@ impl<'a> InstructionEmulator<'a> {
     /// * `screen` - A structure that implements the `EmuScreen` trait. Used to draw to the screen.
     /// * `keyboard` - A structure that implements the `EmuKeyboard` trait. Used to get key press events.
     /// * `memory` - A structure that implements the `EmuMemory` trait. Used to access memory.
+    /// * `trace_file` - If `Some`, a file to be used to trace the execution.
     pub fn with_initial_state(
         register_state: RegisterState,
         screen: &'a mut dyn EmuScreen,
         keyboard: &'a mut dyn EmuKeyboard,
         memory: &'a mut dyn EmuMemory,
+        trace_file: Option<File>,
     ) -> Self {
         InstructionEmulator {
             register_state,
@@ -264,6 +272,7 @@ impl<'a> InstructionEmulator<'a> {
             keyboard,
             memory,
             ignore_sys: true,
+            trace_file,
         }
     }
 
@@ -280,7 +289,16 @@ impl<'a> InstructionEmulator<'a> {
     /// Any errors encountered during emulation are reported by returning a `Result` variant that wraps `EmulationError`.
     pub fn emulate(&mut self, opcode: &[u8; 2]) -> Result<(), EmulationError> {
         match decode(opcode) {
-            Some(ins) => self.emulate_instruction(ins),
+            Some(ins) => {
+                if let Some(f) = &mut self.trace_file {
+                    f.write_fmt(format_args!(
+                        "{:05x}: {:02x}{:02x} {}\n{}",
+                        self.register_state.pc, opcode[0], opcode[1], ins, self.register_state
+                    ))
+                    .unwrap();
+                }
+                self.emulate_instruction(ins)
+            }
             None => Err(EmulationError::InvalidOpcode((opcode[0], opcode[1]))),
         }
     }
