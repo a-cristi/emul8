@@ -4,6 +4,7 @@ use cursive;
 use cursive::event::{Event, EventResult};
 use cursive::theme::{BaseColor, Color, ColorStyle};
 use cursive::views::Canvas;
+use cursive::Printer;
 use instruction_emulator as emu;
 use instruction_emulator::EmuKey;
 use keyboard::{Keyboard, KeyboardState};
@@ -83,6 +84,48 @@ fn emulator_loop(
     }
 }
 
+fn handle_draw(render_state: &RenderState, printer: &Printer) {
+    let ss = render_state.screen_state.lock().unwrap();
+    for row in 0..ss.height {
+        for col in 0..ss.width {
+            let new = ss.buffer[col + row * ss.width];
+            let set = new != 0;
+            if set {
+                printer.with_color(
+                    ColorStyle::new(Color::Dark(BaseColor::Red), Color::Dark(BaseColor::Red)),
+                    |printer| {
+                        printer.print((col, row), " ");
+                    },
+                );
+            } else {
+                printer.with_color(
+                    ColorStyle::new(Color::Dark(BaseColor::Black), Color::Dark(BaseColor::Black)),
+                    |printer| {
+                        printer.print((col, row), " ");
+                    },
+                );
+            }
+        }
+    }
+}
+
+fn handle_event(render_state: &mut RenderState, event: Event) -> EventResult {
+    match event {
+        Event::Char(c) => {
+            let digit = c.to_digit(16);
+            if let Some(digit) = digit {
+                if digit < 16 {
+                    let mut kbd = render_state.keyboard_state.lock().unwrap();
+                    kbd.key = Some(EmuKey::new(digit as u8));
+                    return EventResult::Consumed(None);
+                }
+            }
+            EventResult::Ignored
+        }
+        _ => EventResult::Ignored,
+    }
+}
+
 fn ui_loop(
     screen_state: Arc<Mutex<ScreenState>>,
     keyboard_state: Arc<Mutex<KeyboardState>>,
@@ -105,50 +148,8 @@ fn ui_loop(
             .with_required_size(|rs: &mut RenderState, _| {
                 (rs.screen_width, rs.screen_height).into()
             })
-            .with_draw(|rs: &RenderState, printer| {
-                let ss = rs.screen_state.lock().unwrap();
-                for row in 0..ss.height {
-                    for col in 0..ss.width {
-                        let new = ss.buffer[col + row * ss.width];
-                        let set = new != 0;
-                        if set {
-                            printer.with_color(
-                                ColorStyle::new(
-                                    Color::Dark(BaseColor::Red),
-                                    Color::Dark(BaseColor::Red),
-                                ),
-                                |printer| {
-                                    printer.print((col, row), " ");
-                                },
-                            );
-                        } else {
-                            printer.with_color(
-                                ColorStyle::new(
-                                    Color::Dark(BaseColor::Black),
-                                    Color::Dark(BaseColor::Black),
-                                ),
-                                |printer| {
-                                    printer.print((col, row), " ");
-                                },
-                            );
-                        }
-                    }
-                }
-            })
-            .with_on_event(|rs: &mut RenderState, event| match event {
-                Event::Char(c) => {
-                    let digit = c.to_digit(16);
-                    if let Some(digit) = digit {
-                        if digit < 16 {
-                            let mut kbd = rs.keyboard_state.lock().unwrap();
-                            kbd.key = Some(EmuKey::new(digit as u8));
-                            return EventResult::Consumed(None);
-                        }
-                    }
-                    EventResult::Ignored
-                }
-                _ => EventResult::Ignored,
-            }),
+            .with_draw(|rs: &RenderState, printer| handle_draw(rs, printer))
+            .with_on_event(|rs: &mut RenderState, event| handle_event(rs, event)),
     );
 
     siv.refresh();
