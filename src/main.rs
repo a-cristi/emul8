@@ -195,8 +195,6 @@ fn ui_loop(
 
             return Ok(());
         }
-
-        thread::sleep(std::time::Duration::from_millis(2));
     }
 }
 
