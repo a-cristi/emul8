@@ -1,6 +1,7 @@
 //! A CHIP8 instruction emulator.
 
 use decoder::{decode, Instruction, Operand};
+use rand::Rng;
 use std::error::Error;
 use std::fmt;
 use std::fs::File;
@@ -1120,7 +1121,7 @@ impl<'a> InstructionEmulator<'a> {
 
     /// Returns a random `u8` value.
     fn get_random_u8() -> u8 {
-        unreachable!()
+        rand::thread_rng().gen()
     }
 }
 
