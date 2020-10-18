@@ -58,6 +58,9 @@ impl EmuKey {
 pub trait EmuKeyboard {
     /// Waits until a key is pressend and returns the code of the key.
     fn wait_for_keypress(&mut self) -> EmuKey;
+
+    /// Gets the currenlty pressed key, or `None` if no key is pressed.
+    fn get_key(&mut self) -> Option<EmuKey>;
 }
 
 /// Abstracts access to memory.
@@ -679,12 +682,13 @@ impl<'a> InstructionEmulator<'a> {
                 // Get the expected key value.
                 let expected_key = self.get_operand_value(&op) as u8;
 
-                // Wait for a key to be pressed.
-                let key = self.keyboard.wait_for_keypress().0;
-
-                if expected_key == key {
-                    // Skip the next instruction.
-                    self.register_state.pc += 2;
+                // If a key was pressed.
+                if let Some(key) = self.keyboard.get_key() {
+                    // And it is the key we are waiting for.
+                    if expected_key == key.0 {
+                        // Skip the next instruction.
+                        self.register_state.pc += 2;
+                    }
                 }
 
                 // Update PC.
@@ -695,11 +699,15 @@ impl<'a> InstructionEmulator<'a> {
                 // Get the expected key value.
                 let expected_key = self.get_operand_value(&op) as u8;
 
-                // Wait for a key to be pressed.
-                let key = self.keyboard.wait_for_keypress().0;
-
-                if expected_key != key {
-                    // Skip the next instruction.
+                // If a key was pressed
+                if let Some(key) = self.keyboard.get_key() {
+                    // And it is not our key.
+                    if expected_key != key.0 {
+                        // Skip the next instruction.
+                        self.register_state.pc += 2;
+                    }
+                } else {
+                    // If no key was pressed we also skip the next instruction.
                     self.register_state.pc += 2;
                 }
 
@@ -1146,6 +1154,10 @@ mod tests {
     impl EmuKeyboard for TestKeyboard {
         fn wait_for_keypress(&mut self) -> EmuKey {
             EmuKey::new(0)
+        }
+
+        fn get_key(&mut self) -> Option<EmuKey> {
+            None
         }
     }
 
@@ -2478,8 +2490,12 @@ mod tests {
 
     impl EmuKeyboard for MockKeyboard {
         fn wait_for_keypress(&mut self) -> EmuKey {
+            self.get_key().unwrap()
+        }
+
+        fn get_key(&mut self) -> Option<EmuKey> {
             // This will panic if we don't expect a call.
-            EmuKey::new(self.next_keys.remove(0))
+            Some(EmuKey::new(self.next_keys.remove(0)))
         }
     }
 
