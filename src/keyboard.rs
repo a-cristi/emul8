@@ -6,12 +6,18 @@ use std::sync::Mutex;
 pub struct KeyboardState {
     // Holds the last pressed key until it is replaced or consumed. If no key was pressed it is `None`.
     pub key: Option<EmuKey>,
+
+    /// If `true`, will stop waiting for a key and will return immediately.
+    pub stop: bool,
 }
 
 impl Default for KeyboardState {
     fn default() -> Self {
         // By default no key is pressed.
-        KeyboardState { key: None }
+        KeyboardState {
+            key: None,
+            stop: false,
+        }
     }
 }
 
@@ -33,6 +39,11 @@ impl instruction_emulator::EmuKeyboard for Keyboard {
             {
                 // Get access to the keyboard.
                 let mut kbd = self.state.lock().unwrap();
+
+                if kbd.stop {
+                    return EmuKey::new(0);
+                }
+
                 if let Some(key) = kbd.key {
                     // If we have a key return it and store `None` in its place.
                     kbd.key = None;

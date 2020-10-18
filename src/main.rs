@@ -179,11 +179,20 @@ fn ui_loop(
         if !siv.is_running() {
             // Signal the other threads that is is time to stop.
             stop_flag.store(true, Ordering::SeqCst);
+
+            // Get access to the keyboard state.
+            let mut kbd_state = keyboard_state.lock().unwrap();
+            kbd_state.stop = true;
+
             return Ok(());
         }
 
         // Check if another thread asked us to stop.
         if stop_flag.load(Ordering::SeqCst) {
+            // Get access to the keyboard state.
+            let mut kbd_state = keyboard_state.lock().unwrap();
+            kbd_state.stop = true;
+
             return Ok(());
         }
 
