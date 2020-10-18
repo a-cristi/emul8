@@ -87,6 +87,7 @@ fn main() -> anyhow::Result<()> {
 
         // Load the program into memory.
         memory.load_program(&code)?;
+
         // Load the fonts into memory.
         memory.load_fonts(&fonts::get_fonts())?;
 
@@ -99,6 +100,7 @@ fn main() -> anyhow::Result<()> {
         }
 
         let expected_duration = Duration::from_millis(2);
+        let mut timer_counter = 0;
         loop {
             let start = Instant::now();
 
@@ -108,8 +110,16 @@ fn main() -> anyhow::Result<()> {
                 return Ok(());
             }
 
-            // Decrement the timers. This should be done at 60Hz/s.
-            emu.decrement_timers();
+            // We execute ~500 instructions/s. The timers should be decremented at a rate of 60Hz, which means
+            // that this should be done once every ~8 instructions.
+            // TODO: should this be coupled to how many instructions we execute in one second? What happens
+            // if we wait for a key press? Should the timers decrement during that time?
+            if timer_counter > 0 {
+                timer_counter = 0;
+                emu.decrement_timers();
+            }
+            timer_counter += 1;
+
             // Emulate the next instruction.
             match emu.emulate_next() {
                 Ok(_) => (),
