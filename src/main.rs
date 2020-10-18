@@ -58,7 +58,7 @@ fn emulator_loop(
         // that this should be done once every ~8 instructions.
         // TODO: should this be coupled to how many instructions we execute in one second? What happens
         // if we wait for a key press? Should the timers decrement during that time?
-        if timer_counter > 0 {
+        if timer_counter >= 8 {
             timer_counter = 0;
             emulator.decrement_timers();
         }
