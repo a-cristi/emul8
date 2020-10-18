@@ -1,3 +1,4 @@
+use anyhow;
 use clap::{App, Arg};
 use cursive;
 use cursive::event::{Event, EventResult};
@@ -10,8 +11,11 @@ use instruction_emulator::EmuKey;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::thread;
 
 mod fonts;
 mod keyboard;
@@ -34,7 +38,7 @@ struct RenderState {
     screen_height: usize,
 }
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     let matches = App::new("emul8")
         .version("0.1")
         .author("Cristi")
@@ -56,44 +60,51 @@ fn main() {
         )
         .get_matches();
 
+    // `input` is mandatory, so if we get here we can safely `unwrap` this.
     let in_path = Path::new(matches.value_of("input").unwrap());
-    let code = get_code_from_file(in_path).unwrap();
+
+    // Read the ROM.
+    let code = get_code_from_file(in_path)?;
 
     // State shared between the emulator and the UI.
     let screen_state = Arc::new(Mutex::new(screen::ScreenState::default()));
     let keyboard_state = Arc::new(Mutex::new(keyboard::KeyboardState::default()));
-    // Set to `true` by `ui_thread` when the user wants to quit. Checked by `emu_thread` to know when to stop emulation.
-    let quit = Arc::new(Mutex::new(false));
+    // Set to `true` by one of the threads in order to signal to the others that we must exit.
+    // Usually, this is done by the `ui_thread` when the user decided to quit, but `emu_thread` can also do it in case of errors.
+    let should_stop = Arc::new(AtomicBool::new(false));
     // Set to `true` by `ui_thread` when it is safe for `emu_thread` to start emulation.
-    let ready = Arc::new(Mutex::new(false));
+    let ready = Arc::new(AtomicBool::new(false));
 
     // Clone the shared state for the emulator thread.
     let screen_state_emu = screen_state.clone();
     let keyboard_state_emu = keyboard_state.clone();
-    let quit_emu = quit.clone();
     let ready_emu = ready.clone();
+    let should_stop_emu = should_stop.clone();
 
-    let emu_thread = std::thread::spawn(move || {
+    let emu_thread = std::thread::spawn(move || -> anyhow::Result<()> {
         // Create the scrren, keyboard and memnory that will be used by the emulator.
         let mut screen = screen::Screen::new(screen_state_emu);
         let mut keyboard = keyboard::Keyboard::new(keyboard_state_emu);
         let mut memory = memory::Memory::default();
 
         // Load the program into memory.
-        memory.load_program(&code).unwrap();
+        memory.load_program(&code)?;
         // Load the fonts into memory.
-        memory.load_fonts(&fonts::get_fonts()).unwrap();
+        memory.load_fonts(&fonts::get_fonts())?;
 
         // Create the emulator.
         let mut emu = emu::InstructionEmulator::new(&mut screen, &mut keyboard, &mut memory);
 
         // Check if the `ui_thread` signaled us to start.
-        while !*ready_emu.lock().unwrap() {}
+        while !ready_emu.load(Ordering::SeqCst) {
+            thread::yield_now();
+        }
 
         loop {
             // Should we stop?
-            if *quit_emu.clone().lock().unwrap() {
-                break;
+            // TODO: can I relax this and use `Ordering::Relaxed`?
+            if should_stop_emu.load(Ordering::SeqCst) {
+                return Ok(());
             }
 
             // Decrement the timers. This should be done at 60Hz/s.
@@ -101,9 +112,10 @@ fn main() {
             // Emulate the next instruction.
             match emu.emulate_next() {
                 Ok(_) => (),
-                Err(_) => {
-                    // TODO: handle errors here.
-                    break;
+                Err(e) => {
+                    // Signal the other threads that it is time to stop.
+                    should_stop_emu.store(true, Ordering::SeqCst);
+                    return Err(anyhow::anyhow!("Emulation error: {}", e));
                 }
             }
 
@@ -113,7 +125,7 @@ fn main() {
         }
     });
 
-    let ui_thread = std::thread::spawn(move || {
+    let ui_thread = std::thread::spawn(move || -> anyhow::Result<()> {
         let rs = RenderState {
             screen_state: screen_state.clone(),
             keyboard_state: keyboard_state.clone(),
@@ -178,13 +190,9 @@ fn main() {
 
         siv.refresh();
 
-        let ready = ready.clone();
-        {
-            let mut ready = ready.lock().unwrap();
-            *ready = true;
-        }
+        // Signal the `emu_thread` that emulation can now begin.
+        ready.store(true, Ordering::SeqCst);
 
-        let quit = quit.clone();
         loop {
             siv.step();
 
@@ -205,21 +213,25 @@ fn main() {
             }
 
             if !siv.is_running() {
-                let mut quit = quit.lock().unwrap();
-                *quit = true;
-                break;
+                // Signal the other threads that is is time to stop.
+                should_stop.store(true, Ordering::SeqCst);
+                return Ok(());
             }
+
+            // Check if another thread asked us to stop.
+            if should_stop.load(Ordering::SeqCst) {
+                return Ok(());
+            }
+
+            thread::sleep(std::time::Duration::from_millis(2));
         }
     });
 
-    // TODO: handle errors here
-    match ui_thread.join() {
-        Err(_e) => (),
-        _ => (),
-    }
+    // TODO: a better way of handling errors here?
+    ui_thread.join().expect("Could not join the ui thread")?;
+    emu_thread
+        .join()
+        .expect("Could not join the emulation thread")?;
 
-    match emu_thread.join() {
-        Err(_e) => (),
-        _ => (),
-    }
+    Ok(())
 }
