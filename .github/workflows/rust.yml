@@ -50,3 +50,18 @@ jobs:
         cd instruction_emulator
         cargo clippy
         cd -
+        
+  fmt:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Check emul8
+      run: cargo fmt -- --check
+    - name: Check c8d
+      run: cargo fmt --manifest-path c8d/Cargo.toml -- --check
+    - name: Check decoder
+      run: cargo fmt --manifest-path decoder/Cargo.toml -- --check
+    - name: Check instruction emulator
+      run: cargo fmt --manifest-path instruction_emulator/Cargo.toml -- --check
