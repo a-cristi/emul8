@@ -38,9 +38,9 @@ impl instruction_emulator::EmuKeyboard for Keyboard {
         loop {
             let key = self.get_key();
                 
-            if key.is_some() {
+            if let Some(key) = key {
                 // If we have a key return it now.
-                return key.unwrap();
+                return key;
             }
 
             // No key press yet, wait for the user to press it.

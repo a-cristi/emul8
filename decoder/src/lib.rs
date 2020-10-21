@@ -145,11 +145,9 @@ impl fmt::Display for Instruction {
 ///
 /// ```rust
 /// # use decoder::*;
-/// # fn main() {
-///     let code: [u8; 2] = [0x81, 0x20];
-///     let ins = decoder::decode(&code).unwrap();
-///     assert_eq!(ins, Instruction::Ld((Operand::Gpr(1), Operand::Gpr(2))));
-/// # }
+/// let code: [u8; 2] = [0x81, 0x20];
+/// let ins = decoder::decode(&code).unwrap();
+/// assert_eq!(ins, Instruction::Ld((Operand::Gpr(1), Operand::Gpr(2))));
 /// ```
 pub fn decode(code: &[u8; 2]) -> Option<Instruction> {
     // First, look for `CLS` and `RET`.

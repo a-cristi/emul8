@@ -51,15 +51,15 @@ impl fmt::Display for EmuMemoryError {
 impl Error for EmuMemoryError {}
 
 impl Memory {
-    pub fn load_program(&mut self, program: &Vec<u8>) -> Result<(), EmuMemoryError> {
+    pub fn load_program(&mut self, program: &[u8]) -> Result<(), EmuMemoryError> {
         self.load_at(program, DEFAULT_PROGRAM_BASE)
     }
 
-    pub fn load_fonts(&mut self, sprites: &Vec<u8>) -> Result<(), EmuMemoryError> {
+    pub fn load_fonts(&mut self, sprites: &[u8]) -> Result<(), EmuMemoryError> {
         self.load_at(sprites, DEFAULT_INTERPRETER_ZONE_BASE)
     }
 
-    fn load_at(&mut self, payload: &Vec<u8>, address: usize) -> Result<(), EmuMemoryError> {
+    fn load_at(&mut self, payload: &[u8], address: usize) -> Result<(), EmuMemoryError> {
         if address >= self.memory.capacity() {
             Err(EmuMemoryError::LoadBaseNotInMemory((
                 address,

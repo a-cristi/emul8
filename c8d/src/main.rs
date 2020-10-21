@@ -1,5 +1,4 @@
 use clap::{App, Arg};
-use decoder;
 use std::error::Error;
 use std::fmt;
 use std::fs::File;

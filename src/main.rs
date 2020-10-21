@@ -1,6 +1,4 @@
-use anyhow;
 use clap::{App, Arg};
-use cursive;
 use cursive::event::{Event, EventResult};
 use cursive::theme::{BaseColor, Color, ColorStyle};
 use cursive::views::Canvas;

@@ -116,18 +116,18 @@ impl fmt::Display for RegisterState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for i in 0..15 {
             if i == 8 {
-                write!(f, "\n")?;
+                writeln!(f)?;
             }
 
             write!(f, "V{:x} = {:#04x} ", i, self.gprs[i])?;
         }
 
-        write!(f, "VF = {:#04x}\n", self.flags)?;
-        write!(f, "PC = {:#08x} SP = {:#04x}\n", self.pc, self.sp)?;
-        write!(f, " I = {:#08x}\n", self.address_reg)?;
-        write!(
+        writeln!(f, "VF = {:#04x}", self.flags)?;
+        writeln!(f, "PC = {:#08x} SP = {:#04x}", self.pc, self.sp)?;
+        writeln!(f, " I = {:#08x}", self.address_reg)?;
+        writeln!(
             f,
-            "DT = {:#04x} ST = {:#04x}\n",
+            "DT = {:#04x} ST = {:#04x}",
             self.delay_timer, self.sound_timer
         )
     }
@@ -1121,10 +1121,7 @@ impl<'a> InstructionEmulator<'a> {
 
     /// Returns `true` if a `decoder::Operand` is `Operand::Gpr`.
     fn is_operand_gpr(op: &Operand) -> bool {
-        match op {
-            Operand::Gpr(_) => true,
-            _ => false,
-        }
+        matches!(op, Operand::Gpr(_))
     }
 
     /// Returns a random `u8` value.
