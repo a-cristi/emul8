@@ -42,9 +42,10 @@ struct RenderState {
 fn emulator_loop(
     emulator: &mut emu::InstructionEmulator,
     stop_flag: Arc<AtomicBool>,
+    timer_flag: Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
-    let expected_duration = Duration::from_millis(2);
-    let mut timer_counter = 0;
+    // Try to run at 500Hz.
+    let expected_duration = Duration::from_millis(1000 / 500);
     loop {
         let start = Instant::now();
 
@@ -54,15 +55,12 @@ fn emulator_loop(
             return Ok(());
         }
 
-        // We execute ~500 instructions/s. The timers should be decremented at a rate of 60Hz, which means
-        // that this should be done once every ~8 instructions.
-        // TODO: should this be coupled to how many instructions we execute in one second? What happens
-        // if we wait for a key press? Should the timers decrement during that time?
-        if timer_counter >= 8 {
-            timer_counter = 0;
+        // If needed decrement the timers.
+        if timer_flag.load(Ordering::SeqCst) {
             emulator.decrement_timers();
+            // Reset the flag.
+            timer_flag.store(false, Ordering::SeqCst);
         }
-        timer_counter += 1;
 
         // Emulate the next instruction.
         match emulator.emulate_next() {
@@ -79,7 +77,7 @@ fn emulator_loop(
 
         // Try to make each instruction take up to ~2 milis.
         if duration < expected_duration {
-            std::thread::sleep(Duration::from_millis(2) - duration);
+            std::thread::sleep(expected_duration - duration);
         }
     }
 }
@@ -246,6 +244,36 @@ fn main() -> anyhow::Result<()> {
     let ready_emu = ready.clone();
     let should_stop_emu = should_stop.clone();
 
+    // Shared state between the `emu_thread` and the `timer_thread`.
+    // Set to `true` when the emulator needs to decrement the timers.
+    let decrement_timers = Arc::new(AtomicBool::new(false));
+    let decrement_timers_emu = decrement_timers.clone();
+    // The timer thread also needs to be stopped when the other threads stop.
+    let should_stop_timer = should_stop.clone();
+
+    let timer_thread = thread::Builder::new().name("timer".to_string()).spawn(
+        move || {
+            loop {
+                // Should we stop?
+                if should_stop_timer.load(Ordering::SeqCst) {
+                    break;
+                }
+
+                // Decrement the timers at 60Hz.
+                thread::sleep(Duration::from_millis(1000 / 60));
+                decrement_timers.store(true, Ordering::SeqCst);
+
+                // Wait until the timers have been decremented.
+                while decrement_timers.load(Ordering::SeqCst) {
+                    // Should we stop?
+                    if should_stop_timer.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    thread::yield_now();
+                }
+            }
+        })?;
+
     let emu_thread = thread::Builder::new().name("emulator".to_string()).spawn(
         move || -> anyhow::Result<()> {
             // Create the scrren, keyboard and memnory that will be used by the emulator.
@@ -273,7 +301,7 @@ fn main() -> anyhow::Result<()> {
                 thread::yield_now();
             }
 
-            emulator_loop(&mut emu, should_stop_emu)
+            emulator_loop(&mut emu, should_stop_emu, decrement_timers_emu)
         },
     )?;
 
@@ -285,6 +313,7 @@ fn main() -> anyhow::Result<()> {
             })?;
 
     // TODO: a better way of handling errors here?
+    timer_thread.join().expect("Could not join the timer thread");
     ui_thread.join().expect("Could not join the ui thread")?;
     emu_thread
         .join()
