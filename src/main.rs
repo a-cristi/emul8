@@ -249,8 +249,9 @@ fn main() -> anyhow::Result<()> {
     // The timer thread also needs to be stopped when the other threads stop.
     let should_stop_timer = should_stop.clone();
 
-    let timer_thread = thread::Builder::new().name("timer".to_string()).spawn(
-        move || {
+    let timer_thread = thread::Builder::new()
+        .name("timer".to_string())
+        .spawn(move || {
             loop {
                 // Should we stop?
                 if should_stop_timer.load(Ordering::SeqCst) {
@@ -311,7 +312,9 @@ fn main() -> anyhow::Result<()> {
             })?;
 
     // TODO: a better way of handling errors here?
-    timer_thread.join().expect("Could not join the timer thread");
+    timer_thread
+        .join()
+        .expect("Could not join the timer thread");
     ui_thread.join().expect("Could not join the ui thread")?;
     emu_thread
         .join()

@@ -37,7 +37,7 @@ impl instruction_emulator::EmuKeyboard for Keyboard {
     fn wait_for_keypress(&mut self) -> EmuKey {
         loop {
             let key = self.get_key();
-                
+
             if let Some(key) = key {
                 // If we have a key return it now.
                 return key;
@@ -54,13 +54,12 @@ impl instruction_emulator::EmuKeyboard for Keyboard {
         let mut kbd = self.state.lock().unwrap();
 
         if kbd.stop && kbd.key.is_none() {
-            // If we must stop but we don't have a key return `0`. 
+            // If we must stop but we don't have a key return `0`.
             // It should not matter what we reurn since we will stop emulation anyway.
             Some(EmuKey::new(0))
         } else {
             // This will leave a `None`, so the next instruction isn't affected by the currently pressed key. Not quite perfect.
             kbd.key.take()
         }
-
     }
 }
