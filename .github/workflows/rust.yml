@@ -16,7 +16,17 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
-    - name: Build
+    - name: Build emul8
       run: cargo build --verbose
-    - name: Run tests
+    - name: Run emul8 tests
       run: cargo test --verbose
+    - name: Build c8d
+      run: cargo build --manifest-path c8d/Cargo.toml --verbose
+    - name: Build decoder
+      run: cargo build --manifest-path decoder/Cargo.toml --verbose
+    - name: Run decoder tests
+      run: cargo test --manifest-path decoder/Cargo.toml --verbose
+    - name: Build instruction emulator
+      run: cargo build --manifest-path instruction_emulator/Cargo.toml --verbose
+    - name: Run instruction emulator tests
+      run: cargo test --manifest-path instruction_emulator/Cargo.toml --verbose
