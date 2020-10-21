@@ -26,3 +26,27 @@ jobs:
       run: cargo test --manifest-path decoder/Cargo.toml --verbose
     - name: Run instruction emulator tests
       run: cargo test --manifest-path instruction_emulator/Cargo.toml --verbose
+
+  clippy:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Run clippy on emul8
+      run: cargo clippy
+    - name: Run clippy on c8d
+      run: |
+        cd c8d
+        cargo clippy
+        cd -
+    - name: Run clippy on decoder
+      run: |
+        cd decoder
+        cargo clippy
+        cd -
+    - name: Run clippy on instruction emulator
+      run: |
+        cd instruction_emulator
+        cargo clippy
+        cd -
