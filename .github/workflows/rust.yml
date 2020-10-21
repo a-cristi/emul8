@@ -1,0 +1,28 @@
+name: Rust
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Build emul8
+      run: cargo build --verbose
+    - name: Run emul8 tests
+      run: cargo test --verbose
+    - name: Build c8d
+      run: cargo build --manifest-path c8d/Cargo.toml --verbose
+    - name: Run decoder tests
+      run: cargo test --manifest-path decoder/Cargo.toml --verbose
+    - name: Run instruction emulator tests
+      run: cargo test --manifest-path instruction_emulator/Cargo.toml --verbose
